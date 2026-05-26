@@ -1,6 +1,14 @@
 // Modelo de domínio do inventário: fábricas, área da parcela, agregação de
 // resultados por estrato (une os dados às funções de calculos.js) e formatação BR.
-import { volumeIndividuo, erroAmostral } from "./calculos.js";
+import { volumeIndividuo, erroAmostral, EQUACOES_VOLUME } from "./calculos.js";
+
+export const ESTAGIOS = ["Inicial", "Médio", "Avançado"];
+
+// Nome exibido do estrato = fitofisionomia (+ estágio, se houver).
+export function rotuloEstrato(fitofisionomia, estagio) {
+  const fito = EQUACOES_VOLUME[fitofisionomia]?.rotulo || fitofisionomia || "Estrato";
+  return estagio ? `${fito} — ${estagio}` : fito;
+}
 
 let _seq = 0;
 export const novoId = (pfx) => `${pfx}_${Date.now().toString(36)}_${(_seq++).toString(36)}`;
@@ -23,13 +31,20 @@ export function novoInventario(nome = "Novo inventário") {
       dapMinCm: 5,                // critério de inclusão
       especies: [],               // autocomplete (lista esperada, editável)
     },
-    estratos: [novoEstrato("Estrato único")],
+    estratos: [novoEstrato()],
     parcelas: [],
   };
 }
 
-export function novoEstrato(nome = "Novo estrato") {
-  return { id: novoId("est"), nome, areaTotalHa: null, fitofisionomia: "mata_fes", coefsCustom: null };
+export function novoEstrato(fitofisionomia = "mata_fes", estagio = "") {
+  return {
+    id: novoId("est"),
+    fitofisionomia,
+    estagio,
+    nome: rotuloEstrato(fitofisionomia, estagio),
+    areaTotalHa: null,
+    coefsCustom: null,
+  };
 }
 export function novaParcela(estratoId, rotulo = "") {
   return { id: novoId("par"), rotulo, estratoId, lat: null, lon: null, gpsEm: null, individuos: [] };

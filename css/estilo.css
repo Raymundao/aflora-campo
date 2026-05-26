@@ -112,7 +112,7 @@ input, select, textarea {
 
 /* estratos / fustes */
 .estrato-edit { background: var(--card); border: 1px solid var(--borda); border-radius: 12px; padding: 10px; margin-bottom: 8px; }
-.estrato-edit .e-nome { font-weight: 600; margin-bottom: 6px; }
+.estrato-edit .estrato-titulo { font-weight: 700; color: var(--verde); margin-bottom: 8px; }
 .gps-linha { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
 .gps-linha #gps-info { font-size: 13px; color: var(--cinza); }
 .fuste-linha { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }

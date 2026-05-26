@@ -4,6 +4,7 @@ import * as db from "./db.js";
 import {
   novoInventario, novoEstrato, novaParcela, novoIndividuo, novoFuste,
   resultadosPorEstrato, areaParcelaHa, fmtNum, outliersDoEstrato,
+  ESTAGIOS, rotuloEstrato,
 } from "./modelo.js";
 import { volumeIndividuo, EQUACOES_VOLUME } from "./calculos.js";
 import { exportarJSON, exportarCSV } from "./export.js";
@@ -180,11 +181,16 @@ function telaConfig() {
   const c = inv.config;
   const fitoOpts = (sel) => Object.entries(EQUACOES_VOLUME)
     .map(([k, v]) => `<option value="${k}" ${k === sel ? "selected" : ""}>${esc(v.rotulo)}</option>`).join("");
-  const estratosHtml = inv.estratos.map((e, i) => `<div class="estrato-edit" data-est="${e.id}">
-    <input class="e-nome" data-est="${e.id}" value="${esc(e.nome)}" placeholder="Nome do estrato/fitofisionomia">
+  const estagioOpts = (sel) => ['<option value="">— (sem estágio)</option>']
+    .concat(ESTAGIOS.map((s) => `<option value="${s}" ${s === sel ? "selected" : ""}>${s}</option>`)).join("");
+  const estratosHtml = inv.estratos.map((e) => `<div class="estrato-edit" data-est="${e.id}">
+    <div class="estrato-titulo">${esc(rotuloEstrato(e.fitofisionomia, e.estagio))}</div>
+    <div class="linha2">
+      <label>Fitofisionomia<select class="e-fito" data-est="${e.id}">${fitoOpts(e.fitofisionomia)}</select></label>
+      <label>Estágio sucessional<select class="e-estagio" data-est="${e.id}">${estagioOpts(e.estagio)}</select></label>
+    </div>
     <div class="linha2">
       <label>Área total (ha)<input type="number" step="0.0001" class="e-area" data-est="${e.id}" value="${e.areaTotalHa ?? ""}"></label>
-      <label>Equação<select class="e-fito" data-est="${e.id}">${fitoOpts(e.fitofisionomia)}</select></label>
       ${inv.estratos.length > 1 ? `<button class="perigo del-est" data-est="${e.id}">🗑</button>` : ""}
     </div></div>`).join("");
 
@@ -254,10 +260,18 @@ function telaConfig() {
     c.especies = e.target.value.split("\n").map((s) => s.trim()).filter(Boolean);
     agendarSalvar();
   };
-  $("#add-est").onclick = async () => { inv.estratos.push(novoEstrato("Estrato " + (inv.estratos.length + 1))); await salvarJa(); telaConfig(); };
-  $$(".e-nome").forEach((el) => { el.oninput = () => { estPorId(el.dataset.est).nome = el.value; agendarSalvar(); }; });
+  $("#add-est").onclick = async () => { inv.estratos.push(novoEstrato()); await salvarJa(); telaConfig(); };
   $$(".e-area").forEach((el) => { el.oninput = () => { estPorId(el.dataset.est).areaTotalHa = parseFloat(el.value) || null; agendarSalvar(); }; });
-  $$(".e-fito").forEach((el) => { el.onchange = () => { estPorId(el.dataset.est).fitofisionomia = el.value; agendarSalvar(); }; });
+  const aplicaEstrato = (el, campo) => {
+    const e = estPorId(el.dataset.est);
+    e[campo] = el.value;
+    e.nome = rotuloEstrato(e.fitofisionomia, e.estagio);
+    const t = document.querySelector(`.estrato-edit[data-est="${e.id}"] .estrato-titulo`);
+    if (t) t.textContent = e.nome;
+    agendarSalvar();
+  };
+  $$(".e-fito").forEach((el) => { el.onchange = () => aplicaEstrato(el, "fitofisionomia"); });
+  $$(".e-estagio").forEach((el) => { el.onchange = () => aplicaEstrato(el, "estagio"); });
   $$(".del-est").forEach((el) => {
     el.onclick = async () => {
       const eid = el.dataset.est;

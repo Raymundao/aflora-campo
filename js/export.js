@@ -14,7 +14,7 @@ function numBR(v, casas = 4) {
 // CSV separado por ";" e decimal com vírgula (abre direto no Excel BR).
 export function inventarioParaCSV(inv) {
   const head = [
-    "estrato", "parcela", "lat", "lon", "placa", "especie", "fuste",
+    "estrato", "fitofisionomia", "estagio", "parcela", "lat", "lon", "placa", "especie", "fuste",
     "cap_cm", "dap_cm", "altura_m", "vol_aereo_m3", "vol_total_m3",
   ];
   const linhas = [head.join(";")];
@@ -27,6 +27,8 @@ export function inventarioParaCSV(inv) {
         const vi = volumeIndividuo([f], est.fitofisionomia || "mata_fes", est.coefsCustom);
         linhas.push([
           (est.nome || "").replaceAll(";", ","),
+          (est.fitofisionomia || "").replaceAll(";", ","),
+          (est.estagio || "").replaceAll(";", ","),
           (p.rotulo || "").replaceAll(";", ","),
           p.lat ?? "", p.lon ?? "",
           (ind.placa || "").replaceAll(";", ","),
