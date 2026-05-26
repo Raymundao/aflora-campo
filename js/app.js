@@ -380,6 +380,7 @@ function telaIndividuo(parcelaId, individuoId) {
       <div class="info erro-estrato-box neutro" id="erro-estrato"></div>
       <div id="aviso-outlier"></div>
       <button class="btn-grande" id="prox-ind">✓ Salvar e próximo indivíduo</button>
+      <section id="lista-individuos"></section>
     </main>`;
   ligarVoltar(() => telaParcela(parcelaId));
 
@@ -424,7 +425,27 @@ function telaIndividuo(parcelaId, individuoId) {
         : "";
     }
   }
-  renderFustes(); volVivo();
+  // Lista dos indivíduos já cadastrados na parcela — clicável pra editar/remover/consultar
+  // sem sair da tela. O indivíduo em edição fica destacado.
+  function renderListaIndividuos() {
+    const outliers = outliersDoEstrato(inv, p.estratoId);
+    const itens = p.individuos.map((x, k) => {
+      const vi = volumeIndividuo(x.fustes, est?.fitofisionomia);
+      const atual = x.id === ind.id;
+      const out = outliers.has(x.id);
+      return `<div class="card ${out ? "card-outlier" : ""} ${atual ? "card-atual" : ""}" ${atual ? "" : `data-troca="${x.id}"`}>
+        <div class="card-corpo">
+          <div class="card-nome">#${esc(x.placa || (k + 1))} <i>${esc(x.especie || "—")}</i>`
+        + `${atual ? ' <span class="badge ok">editando</span>' : ""}${out ? ' <span class="badge nok">⚠</span>' : ""}</div>
+          <div class="card-sub">${x.fustes.length} fuste(s) · ${fmtNum(vi.vol_aereo, 4)} m³</div>
+        </div></div>`;
+    }).join("");
+    $("#lista-individuos").innerHTML = `<h3>Indivíduos da parcela (${p.individuos.length})</h3>${itens}`;
+    $$("#lista-individuos [data-troca]").forEach((el) => {
+      el.onclick = async () => { await salvarJa(); telaIndividuo(parcelaId, el.dataset.troca); };
+    });
+  }
+  renderFustes(); volVivo(); renderListaIndividuos();
 
   $("#i-placa").oninput = (e) => { ind.placa = e.target.value; agendarSalvar(); };
   $("#i-especie").oninput = (e) => {
@@ -437,7 +458,10 @@ function telaIndividuo(parcelaId, individuoId) {
   $("#del-ind").onclick = async () => {
     if (confirm("Excluir este indivíduo?")) {
       p.individuos = p.individuos.filter((x) => x.id !== ind.id);
-      await salvarJa(); telaParcela(parcelaId);
+      await salvarJa();
+      // mantém na tela do indivíduo (abrindo o último restante) pra seguir mexendo na lista
+      if (p.individuos.length) telaIndividuo(parcelaId, p.individuos[p.individuos.length - 1].id);
+      else telaParcela(parcelaId);
     }
   };
   $("#prox-ind").onclick = async () => {
