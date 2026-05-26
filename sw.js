@@ -1,6 +1,6 @@
 // Service worker — cache offline dos assets do app. Cache-first com atualização
 // em segundo plano. Suba a versão (CACHE) ao alterar arquivos pra forçar refresh.
-const CACHE = "aflora-campo-v8";
+const CACHE = "aflora-campo-v9";
 const ASSETS = [
   "./", "./index.html", "./manifest.webmanifest",
   "./css/estilo.css",
@@ -22,17 +22,20 @@ self.addEventListener("activate", (e) => {
   );
 });
 
-// Network-first: online sempre pega a versão nova (e atualiza o cache); offline
-// cai no cache. Bom pra campo — atualiza no escritório, funciona no mato.
+// Stale-while-revalidate: serve o cache NA HORA (rápido, funciona offline e com
+// sinal ruim) e busca a versão nova em segundo plano — ela entra na próxima
+// abertura. Assim o app abre instantâneo no campo e continua recebendo updates.
 self.addEventListener("fetch", (e) => {
   if (e.request.method !== "GET") return;
   e.respondWith(
-    fetch(e.request).then((resp) => {
-      if (resp && resp.status === 200 && resp.type === "basic") {
-        const copia = resp.clone();
-        caches.open(CACHE).then((c) => c.put(e.request, copia));
-      }
-      return resp;
-    }).catch(() => caches.match(e.request).then((c) => c || caches.match("./index.html"))),
+    caches.match(e.request).then((cached) => {
+      const buscaRede = fetch(e.request).then((resp) => {
+        if (resp && resp.status === 200 && resp.type === "basic") {
+          caches.open(CACHE).then((c) => c.put(e.request, resp.clone()));
+        }
+        return resp;
+      }).catch(() => cached || caches.match("./index.html"));
+      return cached || buscaRede;
+    }),
   );
 });
