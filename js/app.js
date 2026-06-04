@@ -11,7 +11,7 @@ import { volumeIndividuo, EQUACOES_VOLUME } from "./calculos.js";
 import { exportarJSON, exportarCSV, exportarXLSX, prepararXLSX, baixar } from "./export.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v16"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v17"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -110,7 +110,7 @@ async function telaInventarios() {
       <img class="logo-home" src="./img/brasil_aflora.png" alt="Brasil Aflora — Inteligência Ambiental">
       <button class="btn-grande" id="novo-inv">+ Novo inventário</button>
       <div class="cards">${cards || '<p class="vazio">Nenhum inventário ainda. Crie o primeiro.</p>'}</div>
-      <p class="versao">Aflora Campo · ${APP_VERSION}</p>
+      <p class="versao">Aflora Campo · ${APP_VERSION} · <button id="forcar-update" class="link-update">forçar atualização</button></p>
     </main>`;
 
   $("#novo-inv").onclick = async () => {
@@ -133,6 +133,17 @@ async function telaInventarios() {
   $$("[data-export-csv]").forEach((el) => {
     el.onclick = async () => exportarCSV(await db.obterInventario(el.dataset.exportCsv));
   });
+  // Escape hatch: limpa service worker + caches e recarrega do zero (resolve app
+  // preso numa versão antiga). Os dados ficam (IndexedDB não é tocado).
+  $("#forcar-update").onclick = async () => {
+    if (!confirm("Forçar atualização? Precisa de internet. Seus dados não são apagados.")) return;
+    try {
+      const rs = (navigator.serviceWorker && await navigator.serviceWorker.getRegistrations()) || [];
+      for (const r of rs) await r.unregister();
+      for (const k of await caches.keys()) await caches.delete(k);
+    } catch (e) { /* ignora */ }
+    location.reload();
+  };
 }
 
 // ============================================================
@@ -196,13 +207,14 @@ async function telaInventario(id) {
         <button class="btn-sec" id="cfg">⚙ Config</button>
       </div>
       <div class="cards">${parcelasHtml}</div>
-      <h3 class="sec-export">Exportar</h3>
+      <h3 class="sec-export">Exportar / Compartilhar</h3>
       <div class="acoes-linha wrap">
         <button class="btn-sec" id="exp-xlsx">⬇ XLSX</button>
         <button class="btn-sec" id="exp-csv">⬇ CSV</button>
         <button class="btn-sec" id="exp-json">⬇ JSON</button>
-        <button class="btn-sec destaque" id="share">↗ Compartilhar</button>
       </div>
+      <button class="btn-grande" id="prep-share">↗ Preparar p/ compartilhar</button>
+      <div id="share-panel"></div>
     </main>`;
   ligarVoltar(telaInventarios);
   $("#nova-parc").onclick = async () => {
@@ -216,27 +228,37 @@ async function telaInventario(id) {
   $("#exp-json").onclick = () => exportarJSON(inv);
   $("#exp-csv").onclick = () => exportarCSV(inv);
   $("#exp-xlsx").onclick = () => exportarXLSX(inv);
-  // PRÉ-GERA a planilha quando a tela abre (em segundo plano, sem travar o
-  // render). Assim o clique não faz trabalho pesado antes de navigator.share —
-  // o gesto do usuário fica "fresco" e o Android não dá NotAllowedError.
-  let arquivoXLSX = null;
-  setTimeout(() => { try { arquivoXLSX = prepararXLSX(inv); } catch (e) { /* gera no clique */ } }, 0);
-  $("#share").onclick = () => {
-    let dados = arquivoXLSX;
-    if (!dados) {
-      try { dados = prepararXLSX(inv); } catch (e) { alert("Erro ao gerar a planilha: " + (e?.message || e)); return; }
-    }
-    const { nome, blob, file, mime } = dados;
-    if (navigator.share) {
-      navigator.share({ files: [file], title: nome }).catch((e) => {
-        if (e && e.name === "AbortError") return; // usuário fechou o menu
-        baixar(nome, blob, mime);
-        alert("Não abriu o menu — baixei a planilha.\nMotivo: " + (e?.name || "") + ": " + (e?.message || ""));
-      });
-    } else {
-      baixar(nome, blob, mime);
-      alert("Este navegador não compartilha arquivos — baixei a planilha.");
-    }
+  // Compartilhar em 2 passos (padrão AlpineQuest): 1) "Preparar" MONTA o arquivo;
+  // 2) "Enviar" dispara navigator.share. Como o share vira um toque isolado, sem
+  // trabalho pesado antes, o gesto fica "fresco" e o Android não dá NotAllowedError.
+  $("#prep-share").onclick = () => {
+    const panel = $("#share-panel");
+    panel.innerHTML = '<div class="info">Montando a planilha…</div>';
+    setTimeout(() => {
+      let dados;
+      try { dados = prepararXLSX(inv); }
+      catch (e) { panel.innerHTML = `<div class="info">Erro ao montar: ${esc(e?.message || e)}</div>`; return; }
+      panel.innerHTML = `<div class="share-pronto">
+        <div class="info">✓ Planilha pronta: <b>${esc(dados.nome)}</b></div>
+        <div class="acoes-linha">
+          <button class="btn-grande destaque" id="enviar">↗ Enviar pra um app</button>
+          <button class="btn-sec" id="baixar-share">⬇ Baixar</button>
+        </div></div>`;
+      $("#enviar").onclick = () => {
+        const { nome, blob, file, mime } = dados;
+        if (navigator.share) {
+          navigator.share({ files: [file], title: nome }).catch((e) => {
+            if (e && e.name === "AbortError") return; // usuário fechou o menu
+            baixar(nome, blob, mime);
+            alert("Não abriu o menu — baixei a planilha.\nMotivo: " + (e?.name || "") + ": " + (e?.message || ""));
+          });
+        } else {
+          baixar(nome, blob, mime);
+          alert("Este navegador não compartilha arquivos — baixei a planilha.");
+        }
+      };
+      $("#baixar-share").onclick = () => baixar(dados.nome, dados.blob, dados.mime);
+    }, 30);
   };
   $$("[data-parc]").forEach((el) => { el.onclick = () => telaParcela(el.dataset.parc); });
 }
@@ -357,7 +379,7 @@ function telaParcela(parcelaId) {
 
   const estOpts = inv.estratos.map((e) =>
     `<option value="${e.id}" ${e.id === p.estratoId ? "selected" : ""}>${esc(e.nome)}</option>`).join("");
-  const modos = [["entrada", "Ordem de entrada"], ["placa", "Placa"], ["especie", "Espécie"]];
+  const modos = [["placa", "Placa"], ["especie", "Espécie"], ["entrada", "Ordem de entrada"]];
   const ordAtual = inv.config.ordIndividuos || "entrada";
   const ordOpts = modos.map(([v, t]) =>
     `<option value="${v}" ${v === ordAtual ? "selected" : ""}>${t}</option>`).join("");
@@ -528,7 +550,7 @@ function telaIndividuo(parcelaId, individuoId) {
           <div class="card-sub">${x.fustes.length} fuste(s) · ${fmtNum(vi.vol_aereo, 4)} m³</div>
         </div></div>`;
     }).join("");
-    const modos = [["entrada", "Entrada"], ["placa", "Placa"], ["especie", "Espécie"]];
+    const modos = [["placa", "Placa"], ["especie", "Espécie"], ["entrada", "Ordem de entrada"]];
     const ordOpts = modos.map(([v, t]) => `<option value="${v}" ${v === modo ? "selected" : ""}>${t}</option>`).join("");
     $("#lista-individuos").innerHTML = `<div class="lista-head">
         <h3>Indivíduos da parcela (${p.individuos.length})</h3>
@@ -574,6 +596,14 @@ async function iniciar() {
   await db.pedirPersistencia();
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("./sw.js").catch(() => {});
+    // quando um service worker novo assume o controle, recarrega 1x pra já usar
+    // a versão nova (resolve o app "travado" numa versão antiga).
+    let recarregando = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (recarregando) return;
+      recarregando = true;
+      location.reload();
+    });
   }
   telaInventarios();
 }
