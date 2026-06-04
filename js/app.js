@@ -4,7 +4,7 @@ import * as db from "./db.js";
 import {
   novoInventario, novoEstrato, novaParcela, novoIndividuo, novoFuste,
   resultadosPorEstrato, areaParcelaHa, fmtNum, outliersDoEstrato,
-  ESTAGIOS, rotuloEstrato,
+  ESTAGIOS, rotuloEstrato, mediasParcela,
 } from "./modelo.js";
 import { volumeIndividuo, EQUACOES_VOLUME } from "./calculos.js";
 import { exportarJSON, exportarCSV } from "./export.js";
@@ -292,6 +292,7 @@ function telaParcela(parcelaId) {
   const est = estPorId(p.estratoId);
   const aHa = areaParcelaHa(inv.config);
   const volM3 = p.individuos.reduce((s, ind) => s + volumeIndividuo(ind.fustes, est?.fitofisionomia).vol_aereo, 0);
+  const mp = mediasParcela(p);
   const resEstrato = resultadosPorEstrato(inv).find((r) => r.estrato.id === p.estratoId);
 
   const estOpts = inv.estratos.map((e) =>
@@ -320,6 +321,7 @@ function telaParcela(parcelaId) {
           <span id="gps-info">${p.lat != null ? fmtNum(p.lat, 6) + ", " + fmtNum(p.lon, 6) : "sem coordenada"}</span>
         </div>
         <div class="info">Volume da parcela: <b>${fmtNum(volM3, 4)} m³</b>${aHa ? " · " + fmtNum(volM3 / aHa, 1) + " m³/ha" : ""}</div>
+        <div class="info">${mp.nFustes ? `DAP médio: <b>${fmtNum(mp.dapMedio, 1)} cm</b> · Altura média: <b>${fmtNum(mp.alturaMedia, 1)} m</b> <small>(${mp.nFustes} fuste${mp.nFustes === 1 ? "" : "s"})</small>` : "DAP/altura médios: aguardando primeiro fuste"}</div>
       </div>
       <button class="btn-grande" id="novo-ind">+ Novo indivíduo</button>
       <div class="cards">${indHtml}</div>
@@ -377,6 +379,7 @@ function telaIndividuo(parcelaId, individuoId) {
       <button class="btn-sec" id="add-fuste">+ Adicionar fuste</button>
 
       <div class="info" id="vol-vivo"></div>
+      <div class="info" id="medias-parcela"></div>
       <div class="info erro-estrato-box neutro" id="erro-estrato"></div>
       <div id="aviso-outlier"></div>
       <button class="btn-grande" id="prox-ind">✓ Salvar e próximo indivíduo</button>
@@ -399,6 +402,14 @@ function telaIndividuo(parcelaId, individuoId) {
     const vi = volumeIndividuo(ind.fustes, est?.fitofisionomia);
     $("#vol-vivo").innerHTML = `Volume do indivíduo: <b>${fmtNum(vi.vol_aereo, 4)} m³</b> aéreo · `
       + `${fmtNum(vi.vol_total, 4)} m³ total <small>(${vi.n_fustes} fuste(s), eq. ${esc(EQUACOES_VOLUME[est?.fitofisionomia]?.rotulo || est?.fitofisionomia)})</small>`;
+    // médias da parcela (DAP e altura) recalculadas ao vivo a cada CAP/altura
+    const mp = mediasParcela(p);
+    const mpEl = $("#medias-parcela");
+    if (mpEl) {
+      mpEl.innerHTML = mp.nFustes
+        ? `Médias da parcela: DAP <b>${fmtNum(mp.dapMedio, 1)} cm</b> · Altura <b>${fmtNum(mp.alturaMedia, 1)} m</b> <small>(${mp.nFustes} fuste${mp.nFustes === 1 ? "" : "s"})</small>`
+        : "Médias da parcela: aguardando primeiro fuste";
+    }
     // erro amostral do estrato recalculado ao vivo (inclui este indivíduo) —
     // permite flagrar um outlier antes de fechar a parcela.
     const ee = $("#erro-estrato");

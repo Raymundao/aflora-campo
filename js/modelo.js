@@ -77,6 +77,21 @@ export function volumeParcelaM3(parcela, estrato) {
   return aereo;
 }
 
+// DAP médio (cm) e altura média (m) da parcela — média sobre todos os fustes
+// medidos (DAP = CAP/π). Atualiza ao vivo conforme entram CAP/altura.
+export function mediasParcela(parcela) {
+  let somaDap = 0, somaAlt = 0, n = 0;
+  for (const ind of parcela.individuos) {
+    for (const f of ind.fustes) {
+      if (f.capCm == null || f.alturaM == null) continue;
+      somaDap += f.capCm / Math.PI;
+      somaAlt += f.alturaM;
+      n += 1;
+    }
+  }
+  return { dapMedio: n ? somaDap / n : null, alturaMedia: n ? somaAlt / n : null, nFustes: n };
+}
+
 // Resultado de erro amostral por estrato. A barra usa isso. Toda parcela com
 // volume entra (feedback ao vivo); o erro só é calculado com n >= 2 parcelas.
 export function resultadosPorEstrato(inv) {
