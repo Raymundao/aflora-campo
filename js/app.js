@@ -11,7 +11,7 @@ import { volumeIndividuo, EQUACOES_VOLUME } from "./calculos.js";
 import { exportarJSON, exportarCSV, exportarXLSX, prepararXLSX, baixar } from "./export.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v18"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v19"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -266,17 +266,21 @@ async function telaInventario(id) {
         <div class="acoes-linha">
           <button class="btn-grande destaque" id="enviar">↗ Enviar pra um app</button>
           <button class="btn-sec" id="baixar-share">⬇ Baixar</button>
-        </div></div>`;
+        </div>
+        <button class="btn-sec largo" id="testar-share">🔎 testar envio simples (diagnóstico)</button>
+      </div>`;
       $("#enviar").onclick = () => {
         const { nome, blob, file, mime } = dados;
         if (navigator.share) {
-          navigator.share({ files: [file], title: nome }).catch((e) => {
+          // payload mínimo: só o arquivo (sem title — a combinação trava em alguns Androids)
+          navigator.share({ files: [file] }).catch((e) => {
             if (e && e.name === "AbortError") return; // usuário fechou o menu
             baixar(nome, blob, mime);
             const modo = window.matchMedia("(display-mode: standalone)").matches ? "app instalado" : "navegador";
+            const pode = navigator.canShare ? navigator.canShare({ files: [file] }) : "?";
             alert("Não abriu o menu — baixei a planilha.\n\nManda esse print:\n"
-              + APP_VERSION + " · " + modo + "\n" + (e?.name || "") + ": " + (e?.message || "")
-              + "\n" + navigator.userAgent.slice(0, 90));
+              + APP_VERSION + " · " + modo + " · canShareArq=" + pode + "\n"
+              + (e?.name || "") + ": " + (e?.message || "") + "\n" + navigator.userAgent.slice(0, 90));
           });
         } else {
           baixar(nome, blob, mime);
@@ -284,6 +288,21 @@ async function telaInventario(id) {
         }
       };
       $("#baixar-share").onclick = () => baixar(dados.nome, dados.blob, dados.mime);
+      // DIAGNÓSTICO: tenta compartilhar só um TEXTO (sem arquivo). Se abrir o menu,
+      // o problema é específico de ARQUIVO; se nem texto abrir, é o share todo.
+      $("#testar-share").onclick = () => {
+        if (!navigator.share) { alert("navigator.share não existe aqui. (" + APP_VERSION + ")"); return; }
+        navigator.share({ title: "Teste Aflora", text: "Teste de compartilhamento 123" })
+          .then(() => alert("✓ ABRIU o menu com TEXTO! Então o problema é só com ARQUIVO — vou trocar a estratégia. (" + APP_VERSION + ")"))
+          .catch((e) => {
+            if (e && e.name === "AbortError") {
+              alert("✓ ABRIU o menu (você cancelou). Texto funciona → o problema é só ARQUIVO. (" + APP_VERSION + ")");
+              return;
+            }
+            alert("✗ Texto TAMBÉM falhou:\n" + (e?.name || "") + ": " + (e?.message || "")
+              + "\nEntão é o compartilhamento todo bloqueado. (" + APP_VERSION + ")");
+          });
+      };
     }, 30);
   };
   $$("[data-parc]").forEach((el) => { el.onclick = () => telaParcela(el.dataset.parc); });

@@ -78,6 +78,7 @@ button { font: inherit; cursor: pointer; border-radius: 10px; }
 .share-pronto { margin-top: 6px; }
 .share-pronto .acoes-linha { margin-top: 6px; }
 .share-pronto .btn-grande { margin: 0; flex: 1; }
+.btn-sec.largo { width: 100%; margin-top: 8px; font-size: 13px; }
 
 /* organizar por + export */
 .ordenar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 4px 0 8px; }
