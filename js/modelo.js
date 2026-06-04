@@ -33,7 +33,49 @@ export function novoInventario(nome = "Novo inventário") {
     },
     estratos: [novoEstrato()],
     parcelas: [],
+    especies: [],   // registro de espécies adicionadas manualmente (tela Espécies)
   };
+}
+
+// Registro de espécies do inventário = nomes usados em indivíduos ∪ adicionados
+// manualmente ∪ extras (ex.: espécies que têm foto). Ordenado.
+export function registroEspecies(inv, nomesExtra = []) {
+  const set = new Set();
+  for (const p of inv.parcelas) {
+    for (const ind of p.individuos) {
+      const v = (ind.especie || "").trim();
+      if (v) set.add(v);
+    }
+  }
+  for (const n of (inv.especies || [])) { const v = (n || "").trim(); if (v) set.add(v); }
+  for (const n of nomesExtra) { const v = (n || "").trim(); if (v) set.add(v); }
+  return [...set].sort((a, b) => a.localeCompare(b, "pt-BR"));
+}
+
+export function adicionarEspecie(inv, nome) {
+  nome = (nome || "").trim();
+  if (!nome) return;
+  inv.especies = inv.especies || [];
+  if (!inv.especies.includes(nome)) inv.especies.push(nome);
+}
+
+// Renomeia uma espécie em cascata: indivíduos + registro manual. As FOTOS são
+// atualizadas no app (db.renomearRefKeyFotos). Retorna quantos indivíduos mudaram.
+export function renomearEspecie(inv, antigo, novo) {
+  antigo = (antigo || "").trim();
+  novo = (novo || "").trim();
+  if (!novo || antigo === novo) return 0;
+  let n = 0;
+  for (const p of inv.parcelas) {
+    for (const ind of p.individuos) {
+      if ((ind.especie || "").trim() === antigo) { ind.especie = novo; n++; }
+    }
+  }
+  inv.especies = [...new Set((inv.especies || [])
+    .map((s) => ((s || "").trim() === antigo ? novo : (s || "").trim()))
+    .filter(Boolean))];
+  if (!inv.especies.includes(novo)) inv.especies.push(novo);
+  return n;
 }
 
 export function novoEstrato(fitofisionomia = "mata_fes", estagio = "") {

@@ -6,12 +6,15 @@ import {
   resultadosPorEstrato, areaParcelaHa, fmtNum, outliersDoEstrato,
   ESTAGIOS, rotuloEstrato, mediasParcela,
   semAcento, especiesDoInventario, individuosOrdenados,
+  registroEspecies, adicionarEspecie, renomearEspecie,
 } from "./modelo.js";
 import { volumeIndividuo, EQUACOES_VOLUME } from "./calculos.js";
 import { exportarJSON, exportarCSV, exportarXLSX, prepararXLSX, baixar } from "./export.js";
+import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
+import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v19"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v20"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -206,6 +209,10 @@ async function telaInventario(id) {
   const aHa = areaParcelaHa(inv.config);
   const resultados = resultadosPorEstrato(inv);
   const estPorId = Object.fromEntries(inv.estratos.map((e) => [e.id, e]));
+  const fotos = await db.fotosDoInventario(id);
+  const fotosPorParc = {};
+  for (const f of fotos) if (f.tipo === "parcela") fotosPorParc[f.refKey] = (fotosPorParc[f.refKey] || 0) + 1;
+  const nEspecies = registroEspecies(inv, fotos.filter((f) => f.tipo === "especie").map((f) => f.refKey)).length;
 
   const barras = resultados.map((r) => barraErro(r, inv.config.erroAlvoPct)).join("");
   const parcelasHtml = inv.parcelas.length
@@ -214,16 +221,24 @@ async function telaInventario(id) {
         const volM3 = p.individuos.reduce((s, ind) =>
           s + volumeIndividuo(ind.fustes, est?.fitofisionomia).vol_aereo, 0);
         const mha = aHa ? volM3 / aHa : null;
-        return `<div class="card" data-parc="${p.id}">
-          <div class="card-corpo">
+        const nf = fotosPorParc[p.id] || 0;
+        return `<div class="card">
+          <div class="card-corpo" data-parc="${p.id}">
             <div class="card-nome">${esc(p.rotulo || "(sem rótulo)")} <small>· ${esc(est?.nome || "?")}</small></div>
             <div class="card-sub">${p.individuos.length} indiv. · ${fmtNum(volM3, 4)} m³${mha != null ? " · " + fmtNum(mha, 1) + " m³/ha" : ""}${p.lat != null ? " · 📍" : ""}</div>
+          </div>
+          <div class="card-acoes">
+            <button class="btn-foto" data-fotos-parc="${p.id}" title="Fotos da parcela">📷${nf ? " " + nf : ""}</button>
           </div></div>`;
       }).join("")
     : '<p class="vazio">Nenhuma parcela. Toque em "+ Nova parcela".</p>';
 
   app.innerHTML = `${header(inv.nome, telaInventarios)}
     <main>
+      <div class="seg-nav">
+        <button class="seg ativo">📋 Parcelas</button>
+        <button class="seg" id="ir-especies">🌿 Espécies${nEspecies ? " (" + nEspecies + ")" : ""}</button>
+      </div>
       <section class="painel-erro">${barras}</section>
       <div class="acoes-linha">
         <button class="btn-grande" id="nova-parc">+ Nova parcela</button>
@@ -235,6 +250,10 @@ async function telaInventario(id) {
         <button class="btn-sec" id="exp-xlsx">⬇ XLSX</button>
         <button class="btn-sec" id="exp-csv">⬇ CSV</button>
         <button class="btn-sec" id="exp-json">⬇ JSON</button>
+      </div>
+      <div class="acoes-linha wrap">
+        <button class="btn-sec" id="exp-fotos-parc">📷 Fotos parcelas (ZIP)</button>
+        <button class="btn-sec" id="exp-fotos-esp2">📷 Fotos espécies (ZIP)</button>
       </div>
       <button class="btn-grande" id="prep-share">↗ Preparar p/ compartilhar</button>
       <div id="share-panel"></div>
@@ -248,6 +267,10 @@ async function telaInventario(id) {
     telaParcela(p.id);
   };
   $("#cfg").onclick = telaConfig;
+  $("#ir-especies").onclick = () => telaEspecies(inv.id);
+  $$("[data-fotos-parc]").forEach((el) => { el.onclick = () => telaFotosParcela(el.dataset.fotosParc); });
+  $("#exp-fotos-parc").onclick = () => exportarZipParcelas(inv.id);
+  $("#exp-fotos-esp2").onclick = () => exportarZipEspecies(inv.id);
   $("#exp-json").onclick = () => exportarJSON(inv);
   $("#exp-csv").onclick = () => exportarCSV(inv);
   $("#exp-xlsx").onclick = () => exportarXLSX(inv);
@@ -516,6 +539,7 @@ function telaIndividuo(parcelaId, individuoId) {
           <button type="button" class="ac-toggle" id="i-especie-toggle" aria-label="Ver espécies">▾</button>
           <div class="ac-lista" id="i-especie-lista" hidden></div>
         </div></label>
+      <button class="btn-foto-mini" id="i-foto">📷 foto da espécie <span id="i-foto-n"></span></button>
 
       <h3>Fustes <small>(CAP em cm, altura em m)</small></h3>
       <div id="fustes"></div>
@@ -617,6 +641,23 @@ function telaIndividuo(parcelaId, individuoId) {
     $("#i-especie"), $("#i-especie-toggle"), $("#i-especie-lista"),
     () => especiesDoInventario(inv, ind.id), setEspecie,
   );
+  // atalho de foto da espécie: vai direto pro registro de Espécies
+  async function atualizarFotoN() {
+    const span = $("#i-foto-n");
+    const nome = (ind.especie || "").trim();
+    if (!span) return;
+    if (!nome) { span.textContent = ""; return; }
+    const fs = await db.fotosDoInventario(inv.id);
+    const n = fs.filter((f) => f.tipo === "especie" && f.refKey === nome).length;
+    span.textContent = n ? "(" + n + ")" : "";
+  }
+  atualizarFotoN();
+  $("#i-foto").onclick = async () => {
+    const nome = (ind.especie || "").trim();
+    if (!nome) { alert("Preencha a espécie antes de tirar a foto."); return; }
+    const foto = await capturarFoto(inv.id, "especie", nome);
+    if (foto) { adicionarEspecie(inv, nome); await salvarJa(); atualizarFotoN(); }
+  };
   $("#add-fuste").onclick = async () => { ind.fustes.push(novoFuste()); await salvarJa(); renderFustes(); volVivo(); };
   $("#del-ind").onclick = async () => {
     if (confirm("Excluir este indivíduo?")) {
@@ -634,6 +675,197 @@ function telaIndividuo(parcelaId, individuoId) {
     await salvarJa();
     telaIndividuo(parcelaId, novo.id);
   };
+}
+
+// ============================================================
+// FOTOS — captura, galeria, telas de Espécies e de fotos da parcela, export ZIP
+// ============================================================
+let _fotoUrls = [];
+function revogarUrls() { for (const u of _fotoUrls) URL.revokeObjectURL(u); _fotoUrls = []; }
+function urlFoto(blob) { const u = urlDeBlob(blob); _fotoUrls.push(u); return u; }
+const nomeSeguro = (s) => (s || "sem-nome").replace(/[\\/:*?"<>|]+/g, "-").trim() || "sem-nome";
+const coordTexto = (lat, lon) => (lat == null || lon == null) ? ""
+  : `${fmtNum(Math.abs(lat), 6)} ${lat < 0 ? "S" : "N"}  ${fmtNum(Math.abs(lon), 6)} ${lon < 0 ? "W" : "E"}`;
+function dataTexto(ms) { try { return new Date(ms).toLocaleString("pt-BR"); } catch (e) { return ""; } }
+
+// Abre a câmera, comprime e salva a foto. inp.click() roda no gesto do toque.
+function capturarFoto(invId, tipo, refKey, extra = {}) {
+  return new Promise((resolve) => {
+    const inp = document.createElement("input");
+    inp.type = "file";
+    inp.accept = "image/*";
+    inp.setAttribute("capture", "environment");
+    inp.onchange = async () => {
+      const file = inp.files && inp.files[0];
+      if (!file) return resolve(null);
+      try {
+        const blob = await comprimirImagem(file);
+        const foto = {
+          id: "foto_" + Date.now().toString(36) + "_" + Math.floor(Math.random() * 1e9).toString(36),
+          invId, tipo, refKey, blob,
+          lat: extra.lat ?? null, lon: extra.lon ?? null, capturadaEm: Date.now(),
+        };
+        await db.salvarFoto(foto);
+        resolve(foto);
+      } catch (e) { alert("Erro ao processar a foto: " + (e?.message || e)); resolve(null); }
+    };
+    inp.click();
+  });
+}
+
+function galeriaHTML(fotos) {
+  if (!fotos.length) return '<p class="vazio">Nenhuma foto ainda.</p>';
+  return '<div class="galeria">' + fotos.map((f) =>
+    `<div class="foto-item"><img src="${urlFoto(f.blob)}" alt="" loading="lazy">
+       <button class="foto-del" data-del-foto="${f.id}" title="Excluir">✕</button></div>`).join("") + "</div>";
+}
+function ligarDelFoto(sel, reRender) {
+  $$(sel + " [data-del-foto]").forEach((el) => {
+    el.onclick = async () => {
+      if (!confirm("Excluir esta foto?")) return;
+      await db.excluirFoto(el.dataset.delFoto);
+      reRender();
+    };
+  });
+}
+
+// TELA — registro de Espécies (lista + fotos)
+async function telaEspecies(invId) {
+  inv = await db.obterInventario(invId);
+  if (!inv) return telaInventarios();
+  revogarUrls();
+  const fotos = (await db.fotosDoInventario(invId)).filter((f) => f.tipo === "especie");
+  const contagem = {};
+  for (const f of fotos) contagem[f.refKey] = (contagem[f.refKey] || 0) + 1;
+  const nomes = registroEspecies(inv, fotos.map((f) => f.refKey));
+  const cards = nomes.length ? nomes.map((nome) =>
+    `<div class="card" data-esp="${esc(nome)}">
+       <div class="card-corpo">
+         <div class="card-nome"><i>${esc(nome)}</i></div>
+         <div class="card-sub">${contagem[nome] || 0} foto(s)</div>
+       </div>
+       <div class="card-acoes"><span class="badge ${contagem[nome] ? "ok" : ""}">${contagem[nome] ? "📷 " + contagem[nome] : "—"}</span></div>
+     </div>`).join("")
+    : '<p class="vazio">Nenhuma espécie ainda. As que você registrar nas parcelas aparecem aqui.</p>';
+  app.innerHTML = `${header("Espécies", () => telaInventario(invId))}
+    <main>
+      <div class="seg-nav">
+        <button class="seg" id="ir-parcelas">📋 Parcelas</button>
+        <button class="seg ativo">🌿 Espécies</button>
+      </div>
+      <button class="btn-grande" id="add-esp">+ Adicionar espécie</button>
+      <div class="cards">${cards}</div>
+      <button class="btn-sec largo" id="exp-fotos-esp">⬇ Exportar fotos das espécies (ZIP)</button>
+    </main>`;
+  ligarVoltar(() => telaInventario(invId));
+  $("#ir-parcelas").onclick = () => telaInventario(invId);
+  $("#add-esp").onclick = async () => {
+    const nome = prompt("Nome da espécie (ex.: Myrtaceae sp.1):");
+    if (!nome || !nome.trim()) return;
+    adicionarEspecie(inv, nome.trim());
+    await salvarJa();
+    telaEspecies(invId);
+  };
+  $$("[data-esp]").forEach((el) => { el.onclick = () => telaEspecie(invId, el.dataset.esp); });
+  $("#exp-fotos-esp").onclick = () => exportarZipEspecies(invId);
+}
+
+// TELA — detalhe da espécie (renomear + fotos)
+async function telaEspecie(invId, nome) {
+  inv = await db.obterInventario(invId);
+  if (!inv) return telaInventarios();
+  revogarUrls();
+  let nomeAtual = nome;
+  const fotos = (await db.fotosDoInventario(invId)).filter((f) => f.tipo === "especie" && f.refKey === nome);
+  app.innerHTML = `${header("Espécie", () => telaEspecies(invId))}
+    <main class="form">
+      <label class="campo">Nome da espécie <small>(editar renomeia em todo o inventário)</small>
+        <input id="esp-nome" value="${esc(nome)}"></label>
+      <button class="btn-grande" id="esp-foto">📷 Tirar foto</button>
+      <div id="esp-galeria">${galeriaHTML(fotos)}</div>
+    </main>`;
+  ligarVoltar(() => telaEspecies(invId));
+  $("#esp-nome").onchange = async (e) => {
+    const novo = e.target.value.trim();
+    if (!novo || novo === nomeAtual) return;
+    renomearEspecie(inv, nomeAtual, novo);
+    await db.renomearRefKeyFotos(invId, "especie", nomeAtual, novo);
+    await salvarJa();
+    nomeAtual = novo;
+  };
+  $("#esp-foto").onclick = async () => {
+    const nomeUse = $("#esp-nome").value.trim() || nomeAtual;
+    const foto = await capturarFoto(invId, "especie", nomeUse);
+    if (foto) { adicionarEspecie(inv, nomeUse); await salvarJa(); telaEspecie(invId, nomeUse); }
+  };
+  ligarDelFoto("#esp-galeria", () => telaEspecie(invId, $("#esp-nome").value.trim() || nomeAtual));
+}
+
+// TELA — fotos de uma parcela (coords carimbadas só na exportação)
+async function telaFotosParcela(parcelaId) {
+  if (!inv) return telaInventarios();
+  const p = inv.parcelas.find((x) => x.id === parcelaId);
+  if (!p) return telaInventario(inv.id);
+  revogarUrls();
+  const fotos = (await db.fotosDoInventario(inv.id)).filter((f) => f.tipo === "parcela" && f.refKey === parcelaId);
+  // leitura de GPS em segundo plano (sem travar o gesto da câmera)
+  let ultimaCoord = { lat: p.lat ?? null, lon: p.lon ?? null };
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+      (pos) => { ultimaCoord = { lat: pos.coords.latitude, lon: pos.coords.longitude }; },
+      () => {}, { enableHighAccuracy: true, timeout: 10000 });
+  }
+  app.innerHTML = `${header("Fotos · " + (p.rotulo || "parcela"), () => telaInventario(inv.id))}
+    <main>
+      <div class="info">As coordenadas e o nome da parcela são carimbados na foto <b>só na exportação</b> — pode renomear depois sem perder nada.</div>
+      <button class="btn-grande" id="par-foto">📷 Tirar foto da parcela</button>
+      <div id="par-galeria">${galeriaHTML(fotos)}</div>
+    </main>`;
+  ligarVoltar(() => telaInventario(inv.id));
+  $("#par-foto").onclick = async () => {
+    const foto = await capturarFoto(inv.id, "parcela", parcelaId, ultimaCoord);
+    if (foto) telaFotosParcela(parcelaId);
+  };
+  ligarDelFoto("#par-galeria", () => telaFotosParcela(parcelaId));
+}
+
+// EXPORT — ZIP de fotos por espécie (pasta = nome da espécie)
+async function exportarZipEspecies(invId) {
+  const inv2 = await db.obterInventario(invId);
+  const fotos = (await db.fotosDoInventario(invId)).filter((f) => f.tipo === "especie");
+  if (!fotos.length) { alert("Nenhuma foto de espécie pra exportar."); return; }
+  const porNome = {};
+  for (const f of fotos) (porNome[f.refKey] = porNome[f.refKey] || []).push(f);
+  const arquivos = [];
+  for (const [nome, fs] of Object.entries(porNome)) {
+    const pasta = nomeSeguro(nome);
+    for (let i = 0; i < fs.length; i++) {
+      arquivos.push({ nome: `${pasta}/${pasta}_${i + 1}.jpg`, dados: await fs[i].blob.arrayBuffer() });
+    }
+  }
+  baixar(`${nomeSeguro(inv2.nome)}_fotos_especies.zip`, criarZip(arquivos), "application/zip");
+}
+
+// EXPORT — ZIP de fotos por parcela (pasta = parcela; carimba nome+coords+data)
+async function exportarZipParcelas(invId) {
+  const inv2 = await db.obterInventario(invId);
+  const fotos = (await db.fotosDoInventario(invId)).filter((f) => f.tipo === "parcela");
+  if (!fotos.length) { alert("Nenhuma foto de parcela pra exportar."); return; }
+  const rotulo = {};
+  for (const p of inv2.parcelas) rotulo[p.id] = p.rotulo || p.id;
+  const porParc = {};
+  for (const f of fotos) (porParc[f.refKey] = porParc[f.refKey] || []).push(f);
+  const arquivos = [];
+  for (const [pid, fs] of Object.entries(porParc)) {
+    const rot = rotulo[pid] || pid;
+    const pasta = nomeSeguro(rot);
+    for (let i = 0; i < fs.length; i++) {
+      const f = fs[i];
+      const carimbada = await carimbarTexto(f.blob, [rot, coordTexto(f.lat, f.lon), dataTexto(f.capturadaEm)]);
+      arquivos.push({ nome: `${pasta}/${pasta}_${i + 1}.jpg`, dados: await carimbada.arrayBuffer() });
+    }
+  }
+  baixar(`${nomeSeguro(inv2.nome)}_fotos_parcelas.zip`, criarZip(arquivos), "application/zip");
 }
 
 // ---------- boot ----------

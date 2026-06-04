@@ -1,11 +1,11 @@
 // Service worker — cache offline dos assets do app. Cache-first com atualização
 // em segundo plano. Suba a versão (CACHE) ao alterar arquivos pra forçar refresh.
-const CACHE = "aflora-campo-v19";
+const CACHE = "aflora-campo-v20";
 const ASSETS = [
   "./", "./index.html", "./manifest.webmanifest",
   "./css/estilo.css",
   "./js/app.js", "./js/calculos.js", "./js/modelo.js", "./js/db.js", "./js/export.js",
-  "./js/zip.js", "./js/xlsx.js",
+  "./js/zip.js", "./js/xlsx.js", "./js/imagem.js",
   "./data/tabela_t.js",
   "./icons/icon.svg", "./icons/icon-192.png", "./icons/icon-512.png",
   "./img/brasil_aflora.png",
