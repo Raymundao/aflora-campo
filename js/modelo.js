@@ -148,3 +148,40 @@ export function fmtNum(v, casas = 2) {
   if (v == null || Number.isNaN(v)) return "—";
   return Number(v).toLocaleString("pt-BR", { minimumFractionDigits: casas, maximumFractionDigits: casas });
 }
+
+// Normaliza pra busca: sem acento, minúsculo. "Síparúna" -> "siparuna".
+export const semAcento = (s) =>
+  String(s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
+
+// Lista única de espécies do inventário (config.especies ∪ nomes usados nos
+// indivíduos), ordenada — fonte do autocomplete e base da futura tela de Espécies.
+// `excluirId`: ignora o indivíduo em edição (pra não sugerir o que está sendo digitado).
+export function especiesDoInventario(inv, excluirId = null) {
+  const set = new Set((inv.config?.especies || []).map((s) => s.trim()).filter(Boolean));
+  for (const p of inv.parcelas) {
+    for (const ind of p.individuos) {
+      if (ind.id === excluirId) continue;
+      const v = (ind.especie || "").trim();
+      if (v) set.add(v);
+    }
+  }
+  return [...set].sort((a, b) => a.localeCompare(b, "pt-BR"));
+}
+
+// Indivíduos da parcela ordenados pra exibição, SEM mutar o array (preserva a
+// ordem de entrada). Retorna [{ ind, entrada }] — entrada = índice original.
+export function individuosOrdenados(parcela, modo = "entrada") {
+  const base = parcela.individuos.map((ind, i) => ({ ind, entrada: i }));
+  if (modo === "placa") {
+    base.sort((a, b) => {
+      const pa = (a.ind.placa || "").trim(), pb = (b.ind.placa || "").trim();
+      if (!pa) return pb ? 1 : a.entrada - b.entrada;   // sem placa vai pro fim
+      if (!pb) return -1;
+      return pa.localeCompare(pb, "pt-BR", { numeric: true });
+    });
+  } else if (modo === "especie") {
+    base.sort((a, b) =>
+      (a.ind.especie || "~").localeCompare(b.ind.especie || "~", "pt-BR") || a.entrada - b.entrada);
+  }
+  return base;
+}

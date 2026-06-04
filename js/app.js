@@ -5,9 +5,10 @@ import {
   novoInventario, novoEstrato, novaParcela, novoIndividuo, novoFuste,
   resultadosPorEstrato, areaParcelaHa, fmtNum, outliersDoEstrato,
   ESTAGIOS, rotuloEstrato, mediasParcela,
+  semAcento, especiesDoInventario, individuosOrdenados,
 } from "./modelo.js";
 import { volumeIndividuo, EQUACOES_VOLUME } from "./calculos.js";
-import { exportarJSON, exportarCSV } from "./export.js";
+import { exportarJSON, exportarCSV, exportarXLSX, compartilharXLSX } from "./export.js";
 
 const app = document.getElementById("app");
 let inv = null; // inventário aberto
@@ -16,6 +17,37 @@ const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
   (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+
+// Fecha qualquer dropdown de autocomplete ao tocar fora dele (handler único).
+document.addEventListener("click", (ev) => {
+  $$(".ac-lista").forEach((l) => {
+    const wrap = l.closest(".autocomplete");
+    if (wrap && !wrap.contains(ev.target)) l.hidden = true;
+  });
+});
+
+// Autocomplete custom (o <datalist> nativo não sugere no Android). Setinha abre
+// a lista toda; digitar filtra por prefixo (depois substring), sem acento.
+function ligarAutocomplete(input, toggle, lista, opcoes, onPick) {
+  const render = (termo) => {
+    const t = semAcento(termo);
+    const itens = opcoes()
+      .map((nome) => ({ nome, n: semAcento(nome) }))
+      .filter((x) => !t || x.n.includes(t))
+      .sort((a, b) => (b.n.startsWith(t) - a.n.startsWith(t)) || a.nome.localeCompare(b.nome, "pt-BR"))
+      .slice(0, 50);
+    if (!itens.length) { lista.hidden = true; lista.innerHTML = ""; return; }
+    lista.innerHTML = itens.map((x) =>
+      `<button type="button" class="ac-item" data-nome="${esc(x.nome)}"><i>${esc(x.nome)}</i></button>`).join("");
+    lista.hidden = false;
+    $$(".ac-item", lista).forEach((b) => {
+      b.onclick = () => { input.value = b.dataset.nome; lista.hidden = true; onPick(b.dataset.nome); };
+    });
+  };
+  toggle.onclick = () => { if (lista.hidden) render(""); else lista.hidden = true; }; // setinha = mostra todas
+  input.addEventListener("focus", () => render(input.value));
+  input.addEventListener("input", () => render(input.value));
+}
 
 // ---------- auto-save ----------
 let debTimer = null;
@@ -155,9 +187,12 @@ async function telaInventario(id) {
         <button class="btn-sec" id="cfg">⚙ Config</button>
       </div>
       <div class="cards">${parcelasHtml}</div>
-      <div class="acoes-linha">
-        <button class="btn-sec" id="exp-json">Exportar JSON</button>
-        <button class="btn-sec" id="exp-csv">Exportar CSV</button>
+      <h3 class="sec-export">Exportar</h3>
+      <div class="acoes-linha wrap">
+        <button class="btn-sec" id="exp-xlsx">⬇ XLSX</button>
+        <button class="btn-sec" id="exp-csv">⬇ CSV</button>
+        <button class="btn-sec" id="exp-json">⬇ JSON</button>
+        <button class="btn-sec destaque" id="share">↗ Compartilhar</button>
       </div>
     </main>`;
   ligarVoltar(telaInventarios);
@@ -171,6 +206,14 @@ async function telaInventario(id) {
   $("#cfg").onclick = telaConfig;
   $("#exp-json").onclick = () => exportarJSON(inv);
   $("#exp-csv").onclick = () => exportarCSV(inv);
+  $("#exp-xlsx").onclick = () => exportarXLSX(inv);
+  $("#share").onclick = async () => {
+    const btn = $("#share");
+    btn.textContent = "compartilhando…";
+    const ok = await compartilharXLSX(inv);
+    btn.textContent = ok ? "↗ Compartilhar" : "⬇ baixado (sem compart.)";
+    setTimeout(() => { btn.textContent = "↗ Compartilhar"; }, 2500);
+  };
   $$("[data-parc]").forEach((el) => { el.onclick = () => telaParcela(el.dataset.parc); });
 }
 
@@ -297,18 +340,10 @@ function telaParcela(parcelaId) {
 
   const estOpts = inv.estratos.map((e) =>
     `<option value="${e.id}" ${e.id === p.estratoId ? "selected" : ""}>${esc(e.nome)}</option>`).join("");
-  const outliers = outliersDoEstrato(inv, p.estratoId);
-  const indHtml = p.individuos.length
-    ? p.individuos.map((ind, k) => {
-        const vi = volumeIndividuo(ind.fustes, est?.fitofisionomia);
-        const out = outliers.has(ind.id);
-        return `<div class="card ${out ? "card-outlier" : ""}" data-ind="${ind.id}">
-          <div class="card-corpo">
-            <div class="card-nome">#${esc(ind.placa || (k + 1))} <i>${esc(ind.especie || "—")}</i>${out ? ' <span class="badge nok">⚠ verificar</span>' : ""}</div>
-            <div class="card-sub">${ind.fustes.length} fuste(s) · ${fmtNum(vi.vol_aereo, 4)} m³</div>
-          </div></div>`;
-      }).join("")
-    : '<p class="vazio">Nenhum indivíduo. Toque em "+ Novo indivíduo".</p>';
+  const modos = [["entrada", "Ordem de entrada"], ["placa", "Placa"], ["especie", "Espécie"]];
+  const ordAtual = inv.config.ordIndividuos || "entrada";
+  const ordOpts = modos.map(([v, t]) =>
+    `<option value="${v}" ${v === ordAtual ? "selected" : ""}>${t}</option>`).join("");
 
   app.innerHTML = `${header("Parcela " + (p.rotulo || ""), () => telaInventario(inv.id))}
     <main>
@@ -324,11 +359,13 @@ function telaParcela(parcelaId) {
         <div class="info">${mp.nFustes ? `DAP médio: <b>${fmtNum(mp.dapMedio, 1)} cm</b> · Altura média: <b>${fmtNum(mp.alturaMedia, 1)} m</b> <small>(${mp.nFustes} fuste${mp.nFustes === 1 ? "" : "s"})</small>` : "DAP/altura médios: aguardando primeiro fuste"}</div>
       </div>
       <button class="btn-grande" id="novo-ind">+ Novo indivíduo</button>
-      <div class="cards">${indHtml}</div>
+      <div class="ordenar"><label>Organizar por <select id="ord-ind">${ordOpts}</select></label>
+        <span class="ord-cont">${p.individuos.length} indiv.</span></div>
+      <div class="cards" id="cards-ind"></div>
     </main>`;
   ligarVoltar(() => telaInventario(inv.id));
   $("#p-rotulo").oninput = (e) => { p.rotulo = e.target.value; agendarSalvar(); };
-  $("#p-estrato").onchange = (e) => { p.estratoId = e.target.value; agendarSalvar(); };
+  $("#p-estrato").onchange = (e) => { p.estratoId = e.target.value; agendarSalvar(); renderCardsInd(); };
   $("#p-gps").onclick = () => marcarGPS(p);
   $("#novo-ind").onclick = async () => {
     const ind = novoIndividuo("");
@@ -336,7 +373,27 @@ function telaParcela(parcelaId) {
     await salvarJa();
     telaIndividuo(p.id, ind.id);
   };
-  $$("[data-ind]").forEach((el) => { el.onclick = () => telaIndividuo(p.id, el.dataset.ind); });
+  $("#ord-ind").onchange = (e) => { inv.config.ordIndividuos = e.target.value; agendarSalvar(); renderCardsInd(); };
+
+  function renderCardsInd() {
+    const box = $("#cards-ind");
+    if (!p.individuos.length) {
+      box.innerHTML = '<p class="vazio">Nenhum indivíduo. Toque em "+ Novo indivíduo".</p>';
+      return;
+    }
+    const outliers = outliersDoEstrato(inv, p.estratoId);
+    box.innerHTML = individuosOrdenados(p, inv.config.ordIndividuos || "entrada").map(({ ind, entrada }) => {
+      const vi = volumeIndividuo(ind.fustes, est?.fitofisionomia);
+      const out = outliers.has(ind.id);
+      return `<div class="card ${out ? "card-outlier" : ""}" data-ind="${ind.id}">
+        <div class="card-corpo">
+          <div class="card-nome">#${esc(ind.placa || (entrada + 1))} <i>${esc(ind.especie || "—")}</i>${out ? ' <span class="badge nok">⚠ verificar</span>' : ""}</div>
+          <div class="card-sub">${ind.fustes.length} fuste(s) · ${fmtNum(vi.vol_aereo, 4)} m³</div>
+        </div></div>`;
+    }).join("");
+    $$("[data-ind]", box).forEach((el) => { el.onclick = () => telaIndividuo(p.id, el.dataset.ind); });
+  }
+  renderCardsInd();
 }
 
 function marcarGPS(p) {
@@ -363,7 +420,6 @@ function telaIndividuo(parcelaId, individuoId) {
   if (!ind) return telaParcela(parcelaId);
   const est = estPorId(p.estratoId);
 
-  const datalist = (inv.config.especies || []).map((s) => `<option value="${esc(s)}">`).join("");
   app.innerHTML = `${header("Indivíduo", () => telaParcela(parcelaId))}
     <main class="form">
       <div class="linha2">
@@ -371,8 +427,11 @@ function telaIndividuo(parcelaId, individuoId) {
         <button class="perigo" id="del-ind">🗑 Excluir</button>
       </div>
       <label class="campo">Espécie
-        <input id="i-especie" value="${esc(ind.especie)}" list="dl-especies" autocomplete="off">
-        <datalist id="dl-especies">${datalist}</datalist></label>
+        <div class="autocomplete">
+          <input id="i-especie" value="${esc(ind.especie)}" autocomplete="off" placeholder="Digite ou toque em ▾">
+          <button type="button" class="ac-toggle" id="i-especie-toggle" aria-label="Ver espécies">▾</button>
+          <div class="ac-lista" id="i-especie-lista" hidden></div>
+        </div></label>
 
       <h3>Fustes <small>(CAP em cm, altura em m)</small></h3>
       <div id="fustes"></div>
@@ -458,13 +517,15 @@ function telaIndividuo(parcelaId, individuoId) {
   }
   renderFustes(); volVivo(); renderListaIndividuos();
 
-  $("#i-placa").oninput = (e) => { ind.placa = e.target.value; agendarSalvar(); };
-  $("#i-especie").oninput = (e) => {
-    ind.especie = e.target.value;
-    const v = e.target.value.trim();
-    if (v && !inv.config.especies.includes(v)) inv.config.especies.push(v);
-    agendarSalvar();
-  };
+  $("#i-placa").oninput = (e) => { ind.placa = e.target.value; agendarSalvar(); renderListaIndividuos(); };
+  // não polui a lista com digitação parcial — as opções derivam dos indivíduos
+  // já comprometidos (especiesDoInventario) + as pré-cadastradas em config.
+  const setEspecie = (v) => { ind.especie = v; agendarSalvar(); renderListaIndividuos(); };
+  $("#i-especie").oninput = (e) => setEspecie(e.target.value);
+  ligarAutocomplete(
+    $("#i-especie"), $("#i-especie-toggle"), $("#i-especie-lista"),
+    () => especiesDoInventario(inv, ind.id), setEspecie,
+  );
   $("#add-fuste").onclick = async () => { ind.fustes.push(novoFuste()); await salvarJa(); renderFustes(); volVivo(); };
   $("#del-ind").onclick = async () => {
     if (confirm("Excluir este indivíduo?")) {

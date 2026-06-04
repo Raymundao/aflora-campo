@@ -1,23 +1,49 @@
-// Export do inventário: JSON (backup completo, reimportável) e CSV (1 linha por
-// fuste, schema compatível com aflora_tools.sinaflor pra reprocessar no Python).
+// Export do inventário: XLSX (planilha, números reais), CSV (schema sinaflor),
+// JSON (backup reimportável). Baixar ou compartilhar (WhatsApp/email via Web Share).
 import { volumeIndividuo, dapDeCap } from "./calculos.js";
+import { gerarXlsx } from "./xlsx.js";
 
 export function inventarioParaJSON(inv) {
   return JSON.stringify(inv, null, 2);
 }
+
+const arred = (v, casas) => (v == null || Number.isNaN(v) ? "" : Number(Number(v).toFixed(casas)));
 
 function numBR(v, casas = 4) {
   if (v == null || Number.isNaN(v)) return "";
   return Number(v).toFixed(casas).replace(".", ",");
 }
 
+const COLUNAS = [
+  "estrato", "fitofisionomia", "estagio", "parcela", "lat", "lon", "placa", "especie", "fuste",
+  "cap_cm", "dap_cm", "altura_m", "vol_aereo_m3", "vol_total_m3",
+];
+
+// Matriz [linha][coluna] — 1 linha por fuste. Números entram como número.
+export function inventarioParaMatriz(inv) {
+  const linhas = [COLUNAS.slice()];
+  const estPorId = Object.fromEntries(inv.estratos.map((e) => [e.id, e]));
+  for (const p of inv.parcelas) {
+    const est = estPorId[p.estratoId] || {};
+    for (const ind of p.individuos) {
+      ind.fustes.forEach((f, i) => {
+        if (f.capCm == null || f.alturaM == null) return;
+        const vi = volumeIndividuo([f], est.fitofisionomia || "mata_fes", est.coefsCustom);
+        linhas.push([
+          est.nome || "", est.fitofisionomia || "", est.estagio || "", p.rotulo || "",
+          p.lat ?? "", p.lon ?? "", ind.placa || "", ind.especie || "", i + 1,
+          arred(f.capCm, 1), arred(dapDeCap(f.capCm), 2), arred(f.alturaM, 1),
+          arred(vi.vol_aereo, 6), arred(vi.vol_total, 6),
+        ]);
+      });
+    }
+  }
+  return linhas;
+}
+
 // CSV separado por ";" e decimal com vírgula (abre direto no Excel BR).
 export function inventarioParaCSV(inv) {
-  const head = [
-    "estrato", "fitofisionomia", "estagio", "parcela", "lat", "lon", "placa", "especie", "fuste",
-    "cap_cm", "dap_cm", "altura_m", "vol_aereo_m3", "vol_total_m3",
-  ];
-  const linhas = [head.join(";")];
+  const linhas = [COLUNAS.join(";")];
   const estPorId = Object.fromEntries(inv.estratos.map((e) => [e.id, e]));
   for (const p of inv.parcelas) {
     const est = estPorId[p.estratoId] || {};
@@ -43,8 +69,15 @@ export function inventarioParaCSV(inv) {
   return linhas.join("\r\n");
 }
 
+const MIME = {
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  csv: "text/csv",
+  json: "application/json",
+  zip: "application/zip",
+};
+
 export function baixar(nomeArquivo, conteudo, tipo = "text/plain") {
-  const blob = new Blob([conteudo], { type: `${tipo};charset=utf-8` });
+  const blob = conteudo instanceof Blob ? conteudo : new Blob([conteudo], { type: `${tipo};charset=utf-8` });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -55,12 +88,36 @@ export function baixar(nomeArquivo, conteudo, tipo = "text/plain") {
   setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
 
+// Tenta compartilhar (Web Share API com arquivo). Retorna true se compartilhou
+// (ou o usuário cancelou); false se o dispositivo não suporta → cai pro baixar.
+export async function compartilhar(nomeArquivo, conteudo, tipo) {
+  const blob = conteudo instanceof Blob ? conteudo : new Blob([conteudo], { type: tipo });
+  try {
+    const file = new File([blob], nomeArquivo, { type: tipo });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: nomeArquivo });
+      return true;
+    }
+  } catch (e) {
+    if (e && e.name === "AbortError") return true; // usuário cancelou
+  }
+  return false;
+}
+
 const slug = (s) => (s || "inventario").normalize("NFD").replace(/[̀-ͯ]/g, "")
   .replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase();
 
-export function exportarJSON(inv) {
-  baixar(`${slug(inv.nome)}.json`, inventarioParaJSON(inv), "application/json");
-}
-export function exportarCSV(inv) {
-  baixar(`${slug(inv.nome)}.csv`, inventarioParaCSV(inv), "text/csv");
+const blobXLSX = (inv) => gerarXlsx(inventarioParaMatriz(inv), "Inventario");
+
+export function exportarJSON(inv) { baixar(`${slug(inv.nome)}.json`, inventarioParaJSON(inv), MIME.json); }
+export function exportarCSV(inv) { baixar(`${slug(inv.nome)}.csv`, inventarioParaCSV(inv), MIME.csv); }
+export function exportarXLSX(inv) { baixar(`${slug(inv.nome)}.xlsx`, blobXLSX(inv), MIME.xlsx); }
+
+// Compartilha o XLSX; se não suportado, baixa e avisa via retorno.
+export async function compartilharXLSX(inv) {
+  const nome = `${slug(inv.nome)}.xlsx`;
+  const blob = blobXLSX(inv);
+  const ok = await compartilhar(nome, blob, MIME.xlsx);
+  if (!ok) baixar(nome, blob, MIME.xlsx);
+  return ok;
 }
