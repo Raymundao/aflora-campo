@@ -44,9 +44,10 @@ function ligarAutocomplete(input, toggle, lista, opcoes, onPick) {
       b.onclick = () => { input.value = b.dataset.nome; lista.hidden = true; onPick(b.dataset.nome); };
     });
   };
-  toggle.onclick = () => { if (lista.hidden) render(""); else lista.hidden = true; }; // setinha = todas
-  input.addEventListener("focus", () => render(input.value));
-  input.addEventListener("input", () => render(input.value));
+  // A lista abre SÓ pela setinha. Tocar na caixa pra escrever não mostra nada;
+  // digitar só filtra se a lista já estiver aberta (foi aberta pela setinha).
+  toggle.onclick = () => { if (lista.hidden) render(""); else lista.hidden = true; };
+  input.addEventListener("input", () => { if (!lista.hidden) render(input.value); });
 }
 
 // ---------- auto-save ----------
@@ -213,9 +214,12 @@ async function telaInventario(id) {
   $("#share").onclick = async () => {
     const btn = $("#share");
     btn.textContent = "compartilhando…";
-    const ok = await compartilharXLSX(inv);
-    btn.textContent = ok ? "↗ Compartilhar" : "⬇ baixado (sem compart.)";
-    setTimeout(() => { btn.textContent = "↗ Compartilhar"; }, 2500);
+    const r = await compartilharXLSX(inv);
+    btn.textContent = "↗ Compartilhar";
+    if (!r.ok) {
+      alert("Não abriu o menu de compartilhar — baixei a planilha pra você anexar.\n\n"
+        + "Motivo (me manda esse texto): " + r.motivo);
+    }
   };
   $$("[data-parc]").forEach((el) => { el.onclick = () => telaParcela(el.dataset.parc); });
 }
@@ -494,19 +498,26 @@ function telaIndividuo(parcelaId, individuoId) {
   // Lista dos indivíduos já cadastrados na parcela — clicável pra editar/remover/consultar
   // sem sair da tela. O indivíduo em edição fica destacado.
   function renderListaIndividuos() {
+    const modo = inv.config.ordIndividuos || "entrada";
     const outliers = outliersDoEstrato(inv, p.estratoId);
-    const itens = p.individuos.map((x, k) => {
+    const itens = individuosOrdenados(p, modo).map(({ ind: x, entrada }) => {
       const vi = volumeIndividuo(x.fustes, est?.fitofisionomia);
       const atual = x.id === ind.id;
       const out = outliers.has(x.id);
       return `<div class="card ${out ? "card-outlier" : ""} ${atual ? "card-atual" : ""}" ${atual ? "" : `data-troca="${x.id}"`}>
         <div class="card-corpo">
-          <div class="card-nome">#${esc(x.placa || (k + 1))} <i>${esc(x.especie || "—")}</i>`
+          <div class="card-nome">#${esc(x.placa || (entrada + 1))} <i>${esc(x.especie || "—")}</i>`
         + `${atual ? ' <span class="badge ok">editando</span>' : ""}${out ? ' <span class="badge nok">⚠</span>' : ""}</div>
           <div class="card-sub">${x.fustes.length} fuste(s) · ${fmtNum(vi.vol_aereo, 4)} m³</div>
         </div></div>`;
     }).join("");
-    $("#lista-individuos").innerHTML = `<h3>Indivíduos da parcela (${p.individuos.length})</h3>${itens}`;
+    const modos = [["entrada", "Entrada"], ["placa", "Placa"], ["especie", "Espécie"]];
+    const ordOpts = modos.map(([v, t]) => `<option value="${v}" ${v === modo ? "selected" : ""}>${t}</option>`).join("");
+    $("#lista-individuos").innerHTML = `<div class="lista-head">
+        <h3>Indivíduos da parcela (${p.individuos.length})</h3>
+        <label class="ord-mini">Organizar <select id="ord-ind-i">${ordOpts}</select></label>
+      </div>${itens}`;
+    $("#ord-ind-i").onchange = (e) => { inv.config.ordIndividuos = e.target.value; agendarSalvar(); renderListaIndividuos(); };
     $$("#lista-individuos [data-troca]").forEach((el) => {
       el.onclick = async () => { await salvarJa(); telaIndividuo(parcelaId, el.dataset.troca); };
     });

@@ -79,6 +79,10 @@ button { font: inherit; cursor: pointer; border-radius: 10px; }
 .ordenar label { font-size: 13px; color: var(--cinza); display: flex; align-items: center; gap: 8px; }
 .ordenar select { width: auto; padding: 8px 10px; }
 .ord-cont { font-size: 13px; color: var(--cinza); }
+.lista-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+.lista-head h3 { margin: 0; font-size: 15px; color: var(--verde); }
+.ord-mini { font-size: 13px; color: var(--cinza); display: flex; align-items: center; gap: 6px; }
+.ord-mini select { width: auto; padding: 6px 8px; }
 .sec-export { margin: 18px 0 6px; font-size: 15px; color: var(--verde); border-bottom: 1px solid var(--borda); padding-bottom: 4px; }
 .acoes-linha.wrap { flex-wrap: wrap; }
 .acoes-linha.wrap .btn-sec { flex: 1; min-width: 90px; }

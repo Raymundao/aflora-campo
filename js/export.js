@@ -88,19 +88,20 @@ export function baixar(nomeArquivo, conteudo, tipo = "text/plain") {
   setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
 
-// Compartilha via Web Share API. Tenta o share com arquivo direto (não bloqueia
-// no canShare, que retorna false pra xlsx em alguns Androids). Retorna true se
-// compartilhou ou o usuário cancelou; false se não há suporte → cai pro baixar.
+// Compartilha via Web Share API (menu nativo do Android com os apps: WhatsApp,
+// e-mail, Drive...). Retorna { ok, motivo }. Tenta o share com arquivo; se o
+// device não suportar arquivo, tenta com texto pra ao menos abrir o menu.
 export async function compartilhar(nomeArquivo, conteudo, tipo) {
-  if (!navigator.share) return false;
+  if (!navigator.share) return { ok: false, motivo: "navigator.share indisponível neste navegador" };
   const blob = conteudo instanceof Blob ? conteudo : new Blob([conteudo], { type: tipo });
   const file = new File([blob], nomeArquivo, { type: tipo });
+  const podeArquivo = !navigator.canShare || navigator.canShare({ files: [file] });
   try {
-    await navigator.share({ files: [file], title: nomeArquivo });
-    return true;
+    await navigator.share({ files: [file], title: nomeArquivo, text: nomeArquivo });
+    return { ok: true };
   } catch (e) {
-    if (e && e.name === "AbortError") return true; // usuário cancelou — não baixar
-    return false; // sem suporte a arquivo → baixar
+    if (e && e.name === "AbortError") return { ok: true }; // usuário cancelou
+    return { ok: false, motivo: `${e?.name || "Erro"}: ${e?.message || ""} (canShareArquivo=${podeArquivo})` };
   }
 }
 
@@ -113,11 +114,11 @@ export function exportarJSON(inv) { baixar(`${slug(inv.nome)}.json`, inventarioP
 export function exportarCSV(inv) { baixar(`${slug(inv.nome)}.csv`, inventarioParaCSV(inv), MIME.csv); }
 export function exportarXLSX(inv) { baixar(`${slug(inv.nome)}.xlsx`, blobXLSX(inv), MIME.xlsx); }
 
-// Compartilha o XLSX; se não suportado, baixa e avisa via retorno.
+// Compartilha o XLSX; se não suportado, baixa. Retorna { ok, motivo }.
 export async function compartilharXLSX(inv) {
   const nome = `${slug(inv.nome)}.xlsx`;
   const blob = blobXLSX(inv);
-  const ok = await compartilhar(nome, blob, MIME.xlsx);
-  if (!ok) baixar(nome, blob, MIME.xlsx);
-  return ok;
+  const r = await compartilhar(nome, blob, MIME.xlsx);
+  if (!r.ok) baixar(nome, blob, MIME.xlsx);
+  return r;
 }
