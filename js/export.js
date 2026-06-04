@@ -110,6 +110,15 @@ const slug = (s) => (s || "inventario").normalize("NFD").replace(/[̀-ͯ]/g, "")
 
 const blobXLSX = (inv) => gerarXlsx(inventarioParaMatriz(inv), "Inventario");
 
+// Prepara o xlsx de forma SÍNCRONA: { nome, blob, file }. Permite chamar
+// navigator.share() direto no clique (sem await antes), evitando o
+// NotAllowedError "Permission denied" por perda do gesto do usuário.
+export function prepararXLSX(inv) {
+  const nome = `${slug(inv.nome)}.xlsx`;
+  const blob = blobXLSX(inv);
+  return { nome, blob, file: new File([blob], nome, { type: MIME.xlsx }), mime: MIME.xlsx };
+}
+
 export function exportarJSON(inv) { baixar(`${slug(inv.nome)}.json`, inventarioParaJSON(inv), MIME.json); }
 export function exportarCSV(inv) { baixar(`${slug(inv.nome)}.csv`, inventarioParaCSV(inv), MIME.csv); }
 export function exportarXLSX(inv) { baixar(`${slug(inv.nome)}.xlsx`, blobXLSX(inv), MIME.xlsx); }

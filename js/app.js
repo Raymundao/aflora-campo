@@ -8,7 +8,7 @@ import {
   semAcento, especiesDoInventario, individuosOrdenados,
 } from "./modelo.js";
 import { volumeIndividuo, EQUACOES_VOLUME } from "./calculos.js";
-import { exportarJSON, exportarCSV, exportarXLSX, compartilharXLSX } from "./export.js";
+import { exportarJSON, exportarCSV, exportarXLSX, prepararXLSX, baixar } from "./export.js";
 
 const app = document.getElementById("app");
 let inv = null; // inventário aberto
@@ -44,10 +44,10 @@ function ligarAutocomplete(input, toggle, lista, opcoes, onPick) {
       b.onclick = () => { input.value = b.dataset.nome; lista.hidden = true; onPick(b.dataset.nome); };
     });
   };
-  // A lista abre SÓ pela setinha. Tocar na caixa pra escrever não mostra nada;
-  // digitar só filtra se a lista já estiver aberta (foi aberta pela setinha).
+  // Setinha = mostra todas. Tocar na caixa (foco) NÃO abre nada — só quando
+  // começar a digitar é que aparecem as sugestões filtradas pelo início do nome.
   toggle.onclick = () => { if (lista.hidden) render(""); else lista.hidden = true; };
-  input.addEventListener("input", () => { if (!lista.hidden) render(input.value); });
+  input.addEventListener("input", () => render(input.value));
 }
 
 // ---------- auto-save ----------
@@ -211,14 +211,21 @@ async function telaInventario(id) {
   $("#exp-json").onclick = () => exportarJSON(inv);
   $("#exp-csv").onclick = () => exportarCSV(inv);
   $("#exp-xlsx").onclick = () => exportarXLSX(inv);
-  $("#share").onclick = async () => {
-    const btn = $("#share");
-    btn.textContent = "compartilhando…";
-    const r = await compartilharXLSX(inv);
-    btn.textContent = "↗ Compartilhar";
-    if (!r.ok) {
-      alert("Não abriu o menu de compartilhar — baixei a planilha pra você anexar.\n\n"
-        + "Motivo (me manda esse texto): " + r.motivo);
+  // NÃO usar async/await aqui: navigator.share precisa ser chamado direto no
+  // gesto do clique, senão o Android dá NotAllowedError (perde a ativação).
+  $("#share").onclick = () => {
+    let dados;
+    try { dados = prepararXLSX(inv); } catch (e) { alert("Erro ao gerar a planilha: " + (e?.message || e)); return; }
+    const { nome, blob, file, mime } = dados;
+    if (navigator.share) {
+      navigator.share({ files: [file], title: nome }).catch((e) => {
+        if (e && e.name === "AbortError") return; // usuário fechou o menu
+        baixar(nome, blob, mime);
+        alert("Não abriu o menu — baixei a planilha.\nMotivo: " + (e?.name || "") + ": " + (e?.message || ""));
+      });
+    } else {
+      baixar(nome, blob, mime);
+      alert("Este navegador não compartilha arquivos — baixei a planilha.");
     }
   };
   $$("[data-parc]").forEach((el) => { el.onclick = () => telaParcela(el.dataset.parc); });
