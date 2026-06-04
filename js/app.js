@@ -29,22 +29,22 @@ document.addEventListener("click", (ev) => {
 // Autocomplete custom (o <datalist> nativo não sugere no Android). Setinha abre
 // a lista toda; digitar filtra por prefixo (depois substring), sem acento.
 function ligarAutocomplete(input, toggle, lista, opcoes, onPick) {
+  // termo vazio (setinha/foco) = todas; digitando = filtra por INÍCIO do nome.
   const render = (termo) => {
     const t = semAcento(termo);
     const itens = opcoes()
-      .map((nome) => ({ nome, n: semAcento(nome) }))
-      .filter((x) => !t || x.n.includes(t))
-      .sort((a, b) => (b.n.startsWith(t) - a.n.startsWith(t)) || a.nome.localeCompare(b.nome, "pt-BR"))
-      .slice(0, 50);
+      .filter((nome) => !t || semAcento(nome).startsWith(t))
+      .sort((a, b) => a.localeCompare(b, "pt-BR"))
+      .slice(0, 80);
     if (!itens.length) { lista.hidden = true; lista.innerHTML = ""; return; }
-    lista.innerHTML = itens.map((x) =>
-      `<button type="button" class="ac-item" data-nome="${esc(x.nome)}"><i>${esc(x.nome)}</i></button>`).join("");
+    lista.innerHTML = itens.map((nome) =>
+      `<button type="button" class="ac-item" data-nome="${esc(nome)}"><i>${esc(nome)}</i></button>`).join("");
     lista.hidden = false;
     $$(".ac-item", lista).forEach((b) => {
       b.onclick = () => { input.value = b.dataset.nome; lista.hidden = true; onPick(b.dataset.nome); };
     });
   };
-  toggle.onclick = () => { if (lista.hidden) render(""); else lista.hidden = true; }; // setinha = mostra todas
+  toggle.onclick = () => { if (lista.hidden) render(""); else lista.hidden = true; }; // setinha = todas
   input.addEventListener("focus", () => render(input.value));
   input.addEventListener("input", () => render(input.value));
 }
@@ -160,6 +160,9 @@ function barraErro(r, alvo) {
 async function telaInventario(id) {
   inv = await db.obterInventario(id);
   if (!inv) return telaInventarios();
+  // limpeza única: remove a lista de espécies poluída por digitação parcial da
+  // versão antiga (autocomplete agora deriva só dos indivíduos registrados).
+  if (inv.config?.especies?.length) { delete inv.config.especies; db.salvarInventario(inv); }
   const aHa = areaParcelaHa(inv.config);
   const resultados = resultadosPorEstrato(inv);
   const estPorId = Object.fromEntries(inv.estratos.map((e) => [e.id, e]));
@@ -266,9 +269,6 @@ function telaConfig() {
       <label class="campo">Erro-alvo (%)<input id="cfg-alvo" type="number" step="0.5" value="${c.erroAlvoPct}"></label>
       <label class="check"><input type="checkbox" id="cfg-correcao" ${c.correcaoFinita ? "checked" : ""}> Correção de população finita</label>
       <label class="campo">Critério de inclusão — DAP mínimo (cm)<input id="cfg-dapmin" type="number" step="0.5" value="${c.dapMinCm}"></label>
-
-      <h3>Espécies esperadas (autocomplete)</h3>
-      <textarea id="cfg-especies" rows="4" placeholder="Uma espécie por linha">${esc((c.especies || []).join("\n"))}</textarea>
     </main>`;
   ligarVoltar(() => telaInventario(inv.id));
 
@@ -299,10 +299,6 @@ function telaConfig() {
   $("#cfg-alvo").oninput = (e) => { c.erroAlvoPct = parseFloat(e.target.value) || 10; agendarSalvar(); };
   $("#cfg-correcao").onchange = (e) => { c.correcaoFinita = e.target.checked; agendarSalvar(); };
   $("#cfg-dapmin").oninput = (e) => { c.dapMinCm = parseFloat(e.target.value) || 0; agendarSalvar(); };
-  $("#cfg-especies").oninput = (e) => {
-    c.especies = e.target.value.split("\n").map((s) => s.trim()).filter(Boolean);
-    agendarSalvar();
-  };
   $("#add-est").onclick = async () => { inv.estratos.push(novoEstrato()); await salvarJa(); telaConfig(); };
   $$(".e-area").forEach((el) => { el.oninput = () => { estPorId(el.dataset.est).areaTotalHa = parseFloat(el.value) || null; agendarSalvar(); }; });
   const aplicaEstrato = (el, campo) => {

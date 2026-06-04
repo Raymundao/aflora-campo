@@ -88,20 +88,20 @@ export function baixar(nomeArquivo, conteudo, tipo = "text/plain") {
   setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
 
-// Tenta compartilhar (Web Share API com arquivo). Retorna true se compartilhou
-// (ou o usuário cancelou); false se o dispositivo não suporta → cai pro baixar.
+// Compartilha via Web Share API. Tenta o share com arquivo direto (não bloqueia
+// no canShare, que retorna false pra xlsx em alguns Androids). Retorna true se
+// compartilhou ou o usuário cancelou; false se não há suporte → cai pro baixar.
 export async function compartilhar(nomeArquivo, conteudo, tipo) {
+  if (!navigator.share) return false;
   const blob = conteudo instanceof Blob ? conteudo : new Blob([conteudo], { type: tipo });
+  const file = new File([blob], nomeArquivo, { type: tipo });
   try {
-    const file = new File([blob], nomeArquivo, { type: tipo });
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      await navigator.share({ files: [file], title: nomeArquivo });
-      return true;
-    }
+    await navigator.share({ files: [file], title: nomeArquivo });
+    return true;
   } catch (e) {
-    if (e && e.name === "AbortError") return true; // usuário cancelou
+    if (e && e.name === "AbortError") return true; // usuário cancelou — não baixar
+    return false; // sem suporte a arquivo → baixar
   }
-  return false;
 }
 
 const slug = (s) => (s || "inventario").normalize("NFD").replace(/[̀-ͯ]/g, "")

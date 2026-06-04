@@ -153,11 +153,12 @@ export function fmtNum(v, casas = 2) {
 export const semAcento = (s) =>
   String(s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
 
-// Lista única de espécies do inventário (config.especies ∪ nomes usados nos
-// indivíduos), ordenada — fonte do autocomplete e base da futura tela de Espécies.
-// `excluirId`: ignora o indivíduo em edição (pra não sugerir o que está sendo digitado).
+// Espécies de fato REGISTRADAS no inventário = nomes atribuídos a indivíduos.
+// (Não usa config.especies, que ficou poluído por digitação parcial na versão
+// antiga.) Fonte do autocomplete e base da futura tela de Espécies.
+// `excluirId`: ignora o indivíduo em edição (pra não sugerir o que se está digitando).
 export function especiesDoInventario(inv, excluirId = null) {
-  const set = new Set((inv.config?.especies || []).map((s) => s.trim()).filter(Boolean));
+  const set = new Set();
   for (const p of inv.parcelas) {
     for (const ind of p.individuos) {
       if (ind.id === excluirId) continue;
