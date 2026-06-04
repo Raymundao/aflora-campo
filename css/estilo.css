@@ -73,6 +73,7 @@ button { font: inherit; cursor: pointer; border-radius: 10px; }
 .card-acoes button { font-size: 12px; padding: 8px 10px; border: 1px solid var(--borda); background: #fafafa; }
 .vazio { color: var(--cinza); text-align: center; padding: 24px 8px; }
 .logo-home { display: block; max-width: 210px; width: 56%; height: auto; margin: 10px auto 18px; }
+.versao { text-align: center; color: #9aa89a; font-size: 12px; margin-top: 24px; }
 
 /* organizar por + export */
 .ordenar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 4px 0 8px; }

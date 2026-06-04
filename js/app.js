@@ -11,6 +11,7 @@ import { volumeIndividuo, EQUACOES_VOLUME } from "./calculos.js";
 import { exportarJSON, exportarCSV, exportarXLSX, prepararXLSX, baixar } from "./export.js";
 
 const app = document.getElementById("app");
+const APP_VERSION = "v15"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -106,6 +107,7 @@ async function telaInventarios() {
       <img class="logo-home" src="./img/brasil_aflora.png" alt="Brasil Aflora — Inteligência Ambiental">
       <button class="btn-grande" id="novo-inv">+ Novo inventário</button>
       <div class="cards">${cards || '<p class="vazio">Nenhum inventário ainda. Crie o primeiro.</p>'}</div>
+      <p class="versao">Aflora Campo · ${APP_VERSION}</p>
     </main>`;
 
   $("#novo-inv").onclick = async () => {
