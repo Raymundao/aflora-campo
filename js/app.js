@@ -11,7 +11,7 @@ import { volumeIndividuo, EQUACOES_VOLUME } from "./calculos.js";
 import { exportarJSON, exportarCSV, exportarXLSX, prepararXLSX, baixar } from "./export.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v15"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v16"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -45,10 +45,13 @@ function ligarAutocomplete(input, toggle, lista, opcoes, onPick) {
       b.onclick = () => { input.value = b.dataset.nome; lista.hidden = true; onPick(b.dataset.nome); };
     });
   };
-  // Setinha = mostra todas. Tocar na caixa (foco) NÃO abre nada — só quando
-  // começar a digitar é que aparecem as sugestões filtradas pelo início do nome.
+  // Setinha = mostra todas. Digitar = filtra pelo início. Campo vazio (apagou
+  // tudo) = esconde a lista — só a setinha mostra tudo quando não há texto.
   toggle.onclick = () => { if (lista.hidden) render(""); else lista.hidden = true; };
-  input.addEventListener("input", () => render(input.value));
+  input.addEventListener("input", () => {
+    if (input.value.trim()) render(input.value);
+    else { lista.hidden = true; lista.innerHTML = ""; }
+  });
 }
 
 // ---------- auto-save ----------
@@ -213,11 +216,16 @@ async function telaInventario(id) {
   $("#exp-json").onclick = () => exportarJSON(inv);
   $("#exp-csv").onclick = () => exportarCSV(inv);
   $("#exp-xlsx").onclick = () => exportarXLSX(inv);
-  // NÃO usar async/await aqui: navigator.share precisa ser chamado direto no
-  // gesto do clique, senão o Android dá NotAllowedError (perde a ativação).
+  // PRÉ-GERA a planilha quando a tela abre (em segundo plano, sem travar o
+  // render). Assim o clique não faz trabalho pesado antes de navigator.share —
+  // o gesto do usuário fica "fresco" e o Android não dá NotAllowedError.
+  let arquivoXLSX = null;
+  setTimeout(() => { try { arquivoXLSX = prepararXLSX(inv); } catch (e) { /* gera no clique */ } }, 0);
   $("#share").onclick = () => {
-    let dados;
-    try { dados = prepararXLSX(inv); } catch (e) { alert("Erro ao gerar a planilha: " + (e?.message || e)); return; }
+    let dados = arquivoXLSX;
+    if (!dados) {
+      try { dados = prepararXLSX(inv); } catch (e) { alert("Erro ao gerar a planilha: " + (e?.message || e)); return; }
+    }
     const { nome, blob, file, mime } = dados;
     if (navigator.share) {
       navigator.share({ files: [file], title: nome }).catch((e) => {
