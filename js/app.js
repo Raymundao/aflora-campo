@@ -11,7 +11,7 @@ import { volumeIndividuo, EQUACOES_VOLUME } from "./calculos.js";
 import { exportarJSON, exportarCSV, exportarXLSX, prepararXLSX, baixar } from "./export.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v17"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v18"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -108,7 +108,11 @@ async function telaInventarios() {
   app.innerHTML = `${header("Inventários")}
     <main>
       <img class="logo-home" src="./img/brasil_aflora.png" alt="Brasil Aflora — Inteligência Ambiental">
-      <button class="btn-grande" id="novo-inv">+ Novo inventário</button>
+      <div class="acoes-linha">
+        <button class="btn-grande" id="novo-inv">+ Novo inventário</button>
+        <button class="btn-sec" id="importar">⬆ Importar</button>
+      </div>
+      <input type="file" id="file-import" accept=".json,application/json" hidden>
       <div class="cards">${cards || '<p class="vazio">Nenhum inventário ainda. Crie o primeiro.</p>'}</div>
       <p class="versao">Aflora Campo · ${APP_VERSION} · <button id="forcar-update" class="link-update">forçar atualização</button></p>
     </main>`;
@@ -117,6 +121,25 @@ async function telaInventarios() {
     inv = novoInventario();
     await db.salvarInventario(inv);
     telaInventario(inv.id);
+  };
+  // Importar JSON exportado (backup/restauração). Gera novo id pra não sobrescrever.
+  $("#importar").onclick = () => $("#file-import").click();
+  $("#file-import").onchange = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    try {
+      const obj = JSON.parse(await file.text());
+      if (!obj || !Array.isArray(obj.parcelas) || !Array.isArray(obj.estratos)) {
+        throw new Error("o arquivo não parece um inventário exportado");
+      }
+      obj.id = "inv_" + Date.now().toString(36);
+      obj.importadoEm = Date.now();
+      await db.salvarInventario(obj);
+      alert("Inventário importado: " + (obj.nome || obj.id));
+      telaInventarios();
+    } catch (err) {
+      alert("Não consegui importar: " + (err?.message || err));
+    }
   };
   $$("[data-abrir]").forEach((el) => { el.onclick = () => telaInventario(el.dataset.abrir); });
   $$("[data-excluir]").forEach((el) => {
@@ -250,11 +273,14 @@ async function telaInventario(id) {
           navigator.share({ files: [file], title: nome }).catch((e) => {
             if (e && e.name === "AbortError") return; // usuário fechou o menu
             baixar(nome, blob, mime);
-            alert("Não abriu o menu — baixei a planilha.\nMotivo: " + (e?.name || "") + ": " + (e?.message || ""));
+            const modo = window.matchMedia("(display-mode: standalone)").matches ? "app instalado" : "navegador";
+            alert("Não abriu o menu — baixei a planilha.\n\nManda esse print:\n"
+              + APP_VERSION + " · " + modo + "\n" + (e?.name || "") + ": " + (e?.message || "")
+              + "\n" + navigator.userAgent.slice(0, 90));
           });
         } else {
           baixar(nome, blob, mime);
-          alert("Este navegador não compartilha arquivos — baixei a planilha.");
+          alert("Este navegador não compartilha arquivos — baixei a planilha. (" + APP_VERSION + ")");
         }
       };
       $("#baixar-share").onclick = () => baixar(dados.nome, dados.blob, dados.mime);
@@ -595,7 +621,9 @@ function telaIndividuo(parcelaId, individuoId) {
 async function iniciar() {
   await db.pedirPersistencia();
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("./sw.js").catch(() => {});
+    // updateViaCache:"none" → o browser sempre busca um sw.js fresco (sem cache
+    // HTTP), garantindo que updates cheguem na próxima abertura.
+    navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" }).catch(() => {});
     // quando um service worker novo assume o controle, recarrega 1x pra já usar
     // a versão nova (resolve o app "travado" numa versão antiga).
     let recarregando = false;
