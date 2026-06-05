@@ -119,19 +119,20 @@ export function volumeParcelaM3(parcela, estrato) {
   return aereo;
 }
 
-// DAP médio (cm) e altura média (m) da parcela — média sobre todos os fustes
-// medidos (DAP = CAP/π). Atualiza ao vivo conforme entram CAP/altura.
+// DAP médio (cm) e altura da maior árvore (m) da parcela. DAP = média de todos
+// os fustes (DAP = CAP/π); altura = MÁXIMA (altura do dossel = estrato superior,
+// não a média que inclui o sub-bosque). Atualiza ao vivo conforme entram dados.
 export function mediasParcela(parcela) {
-  let somaDap = 0, somaAlt = 0, n = 0;
+  let somaDap = 0, n = 0, alturaMax = null;
   for (const ind of parcela.individuos) {
     for (const f of ind.fustes) {
       if (f.capCm == null || f.alturaM == null) continue;
       somaDap += f.capCm / Math.PI;
-      somaAlt += f.alturaM;
+      if (alturaMax == null || f.alturaM > alturaMax) alturaMax = f.alturaM;
       n += 1;
     }
   }
-  return { dapMedio: n ? somaDap / n : null, alturaMedia: n ? somaAlt / n : null, nFustes: n };
+  return { dapMedio: n ? somaDap / n : null, alturaMaxima: alturaMax, nFustes: n };
 }
 
 // Resultado de erro amostral por estrato. A barra usa isso. Toda parcela com

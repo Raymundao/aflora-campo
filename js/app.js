@@ -14,7 +14,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v24"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v25"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -539,10 +539,10 @@ const CONAMA_QUALI = [
 ];
 const grupoConama = (estrato) => EQUACOES_VOLUME[estrato?.fitofisionomia]?.conama || null;
 
-function classeAltura(alturaMedia, g) {
-  if (alturaMedia == null) return null;
+function classeAltura(altura, g) {
+  if (altura == null) return null;
   const a = CONAMA_LIMIARES[g].altura;
-  return alturaMedia <= a.lo ? "inicial" : alturaMedia <= a.hi ? "medio" : "avancado";
+  return altura <= a.lo ? "inicial" : altura <= a.hi ? "medio" : "avancado";
 }
 function classeDap(dapMedio, g) {
   if (dapMedio == null) return null;
@@ -559,7 +559,7 @@ function classificarEstagio(p, estrato) {
   if (g !== "fes_fod" && g !== "fed") return null; // cerrado: CONAMA 423 (depois)
   const mp = mediasParcela(p);
   const c = p.conama || {};
-  const votos = [classeAltura(mp.alturaMedia, g), classeDap(mp.dapMedio, g)];
+  const votos = [classeAltura(mp.alturaMaxima, g), classeDap(mp.dapMedio, g)];
   for (const q of CONAMA_QUALI) votos.push(c[q.key] || null);
   votos.push(c.indicadoras === "pioneiras" ? "inicial" : c.indicadoras === "secundarias" ? "ambiguo" : null);
   const cont = (arr, s) => arr.filter((v) => v === s).length;
@@ -600,7 +600,7 @@ function telaConama(parcelaId) {
     `<button class="conama-opt ${c[key] === est ? "sel" : ""}" data-param="${key}" data-est="${est}">
        <b>${ROTULO_ESTAGIO[est]}</b><span>${esc(desc[est])}</span></button>`).join("");
   // altura/DAP: auto a partir das médias medidas (mostra a classe sugerida)
-  const aAlt = classeAltura(mp.alturaMedia, g);
+  const aAlt = classeAltura(mp.alturaMaxima, g);
   const aDap = classeDap(mp.dapMedio, g);
   const autoLinha = (label, valor, classe, d) => `<div class="conama-auto">
     <div class="conama-auto-top"><b>${label}</b> ${valor} → <span class="badge ${classe && classe !== "ambiguo" ? "ok" : "nok"}">${classe ? (classe === "ambiguo" ? "zona 18–20 (decide pelos outros)" : ROTULO_ESTAGIO[classe]) : "sem dado"}</span></div>
@@ -618,7 +618,7 @@ function telaConama(parcelaId) {
   app.innerHTML = `${header("Estágio sucessional", () => telaParcela(parcelaId))}
     <main>
       <div class="info">${lim.rotulo} · parcela <b>${esc(p.rotulo || "")}</b></div>
-      ${autoLinha("Altura do dossel", mp.alturaMedia != null ? fmtNum(mp.alturaMedia, 1) + " m" : "—", aAlt, lim.altura)}
+      ${autoLinha("Altura do dossel", mp.alturaMaxima != null ? fmtNum(mp.alturaMaxima, 1) + " m" : "—", aAlt, lim.altura)}
       ${autoLinha("DAP médio", mp.dapMedio != null ? fmtNum(mp.dapMedio, 1) + " cm" : "—", aDap, lim.dap)}
       ${qualiHtml}
       ${indHtml}
@@ -677,7 +677,7 @@ function telaParcela(parcelaId) {
           <span id="gps-info">${p.lat != null ? fmtNum(p.lat, 6) + ", " + fmtNum(p.lon, 6) : "sem coordenada"}</span>
         </div>
         <div class="info">Volume da parcela: <b>${fmtNum(volM3, 4)} m³</b>${aHa ? " · " + fmtNum(volM3 / aHa, 1) + " m³/ha" : ""}</div>
-        <div class="info">${mp.nFustes ? `DAP médio: <b>${fmtNum(mp.dapMedio, 1)} cm</b> · Altura média: <b>${fmtNum(mp.alturaMedia, 1)} m</b> <small>(${mp.nFustes} fuste${mp.nFustes === 1 ? "" : "s"})</small>` : "DAP/altura médios: aguardando primeiro fuste"}</div>
+        <div class="info">${mp.nFustes ? `DAP médio: <b>${fmtNum(mp.dapMedio, 1)} cm</b> · Altura da maior árvore: <b>${fmtNum(mp.alturaMaxima, 1)} m</b> <small>(${mp.nFustes} fuste${mp.nFustes === 1 ? "" : "s"})</small>` : "DAP/altura: aguardando primeiro fuste"}</div>
         <button class="btn-sec largo" id="p-conama">🌳 Estágio sucessional (CONAMA) <span id="p-conama-est"></span></button>
       </div>
       <button class="btn-grande" id="novo-ind">+ Novo indivíduo</button>
@@ -794,7 +794,7 @@ function telaIndividuo(parcelaId, individuoId) {
     const mpEl = $("#medias-parcela");
     if (mpEl) {
       mpEl.innerHTML = mp.nFustes
-        ? `Médias da parcela: DAP <b>${fmtNum(mp.dapMedio, 1)} cm</b> · Altura <b>${fmtNum(mp.alturaMedia, 1)} m</b> <small>(${mp.nFustes} fuste${mp.nFustes === 1 ? "" : "s"})</small>`
+        ? `Parcela: DAP médio <b>${fmtNum(mp.dapMedio, 1)} cm</b> · maior árvore <b>${fmtNum(mp.alturaMaxima, 1)} m</b> <small>(${mp.nFustes} fuste${mp.nFustes === 1 ? "" : "s"})</small>`
         : "Médias da parcela: aguardando primeiro fuste";
     }
     // erro amostral do estrato recalculado ao vivo (inclui este indivíduo) —
