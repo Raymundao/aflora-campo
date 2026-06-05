@@ -14,7 +14,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v25"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v26"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -654,13 +654,6 @@ function telaParcela(parcelaId) {
   const p = inv.parcelas.find((x) => x.id === parcelaId);
   if (!p) return telaInventario(inv.id);
   const est = estPorId(p.estratoId);
-  const aHa = areaParcelaHa(inv.config);
-  const volM3 = p.individuos.reduce((s, ind) => s + volumeIndividuo(ind.fustes, est?.fitofisionomia).vol_aereo, 0);
-  const mp = mediasParcela(p);
-  const resEstrato = resultadosPorEstrato(inv).find((r) => r.estrato.id === p.estratoId);
-
-  const estOpts = inv.estratos.map((e) =>
-    `<option value="${e.id}" ${e.id === p.estratoId ? "selected" : ""}>${esc(e.nome)}</option>`).join("");
   const modos = [["placa", "Placa"], ["especie", "Espécie"], ["entrada", "Ordem de entrada"]];
   const ordAtual = inv.config.ordIndividuos || "entrada";
   const ordOpts = modos.map(([v, t]) =>
@@ -668,16 +661,12 @@ function telaParcela(parcelaId) {
 
   app.innerHTML = `${header("Parcela " + (p.rotulo || ""), () => telaParcelasDoEstrato(p.estratoId))}
     <main>
-      <section class="painel-erro">${barraErro(resEstrato, inv.config.erroAlvoPct)}</section>
       <div class="form">
         <label class="campo">Rótulo da parcela<input id="p-rotulo" value="${esc(p.rotulo)}"></label>
-        <label class="campo">Estrato<select id="p-estrato">${estOpts}</select></label>
         <div class="gps-linha">
           <button class="btn-sec" id="p-gps">📍 Marcar GPS</button>
           <span id="gps-info">${p.lat != null ? fmtNum(p.lat, 6) + ", " + fmtNum(p.lon, 6) : "sem coordenada"}</span>
         </div>
-        <div class="info">Volume da parcela: <b>${fmtNum(volM3, 4)} m³</b>${aHa ? " · " + fmtNum(volM3 / aHa, 1) + " m³/ha" : ""}</div>
-        <div class="info">${mp.nFustes ? `DAP médio: <b>${fmtNum(mp.dapMedio, 1)} cm</b> · Altura da maior árvore: <b>${fmtNum(mp.alturaMaxima, 1)} m</b> <small>(${mp.nFustes} fuste${mp.nFustes === 1 ? "" : "s"})</small>` : "DAP/altura: aguardando primeiro fuste"}</div>
         <button class="btn-sec largo" id="p-conama">🌳 Estágio sucessional (CONAMA) <span id="p-conama-est"></span></button>
       </div>
       <button class="btn-grande" id="novo-ind">+ Novo indivíduo</button>
@@ -692,7 +681,6 @@ function telaParcela(parcelaId) {
     : (grupoConama(est) ? "" : '<small>(cerrado: depois)</small>');
   $("#p-conama").onclick = () => telaConama(p.id);
   $("#p-rotulo").oninput = (e) => { p.rotulo = e.target.value; agendarSalvar(); };
-  $("#p-estrato").onchange = (e) => { p.estratoId = e.target.value; agendarSalvar(); renderCardsInd(); };
   $("#p-gps").onclick = () => marcarGPS(p);
   $("#novo-ind").onclick = async () => {
     const ind = novoIndividuo("");
@@ -749,6 +737,9 @@ function telaIndividuo(parcelaId, individuoId) {
 
   app.innerHTML = `${header("Indivíduo", () => telaParcela(parcelaId))}
     <main class="form">
+      <div class="info" id="medias-parcela"></div>
+      <div class="info erro-estrato-box neutro" id="erro-estrato"></div>
+      <div id="aviso-outlier"></div>
       <div class="linha2">
         <label>Placa<input id="i-placa" value="${esc(ind.placa)}" inputmode="numeric"></label>
         <button class="perigo" id="del-ind">🗑 Excluir</button>
@@ -765,10 +756,6 @@ function telaIndividuo(parcelaId, individuoId) {
       <div id="fustes"></div>
       <button class="btn-sec" id="add-fuste">+ Adicionar fuste</button>
 
-      <div class="info" id="vol-vivo"></div>
-      <div class="info" id="medias-parcela"></div>
-      <div class="info erro-estrato-box neutro" id="erro-estrato"></div>
-      <div id="aviso-outlier"></div>
       <button class="btn-grande" id="prox-ind">✓ Salvar e próximo indivíduo</button>
       <section id="lista-individuos"></section>
     </main>`;
@@ -786,9 +773,6 @@ function telaIndividuo(parcelaId, individuoId) {
     $$(".f-del").forEach((el) => { el.onclick = async () => { ind.fustes.splice(+el.dataset.i, 1); await salvarJa(); renderFustes(); volVivo(); }; });
   }
   function volVivo() {
-    const vi = volumeIndividuo(ind.fustes, est?.fitofisionomia);
-    $("#vol-vivo").innerHTML = `Volume do indivíduo: <b>${fmtNum(vi.vol_aereo, 4)} m³</b> aéreo · `
-      + `${fmtNum(vi.vol_total, 4)} m³ total <small>(${vi.n_fustes} fuste(s), eq. ${esc(EQUACOES_VOLUME[est?.fitofisionomia]?.rotulo || est?.fitofisionomia)})</small>`;
     // médias da parcela (DAP e altura) recalculadas ao vivo a cada CAP/altura
     const mp = mediasParcela(p);
     const mpEl = $("#medias-parcela");
