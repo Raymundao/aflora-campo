@@ -115,6 +115,23 @@ button { font: inherit; cursor: pointer; border-radius: 10px; }
 .compl-item.ok { background: #E8F5E9; color: var(--verde); }
 .compl-item.pend { background: #ECEFF1; color: var(--cinza); }
 
+/* formulário CONAMA 392 */
+.conama-param { background: var(--card); border: 1px solid var(--borda); border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; }
+.conama-label { font-weight: 600; margin-bottom: 6px; font-size: 14px; }
+.conama-opts { display: flex; gap: 6px; flex-wrap: wrap; }
+.conama-opt { flex: 1; min-width: 92px; background: #fafafa; border: 1.5px solid var(--borda); border-radius: 10px; padding: 8px; display: flex; flex-direction: column; gap: 2px; text-align: left; }
+.conama-opt b { font-size: 13px; color: var(--texto); }
+.conama-opt span { font-size: 11px; color: var(--cinza); }
+.conama-opt.sel { border-color: var(--verde); background: #E8F5E9; }
+.conama-opt.larga { flex: 2; }
+.conama-auto { background: #E8F5E9; border-radius: 10px; padding: 8px 12px; margin-bottom: 8px; }
+.conama-auto-top { font-size: 14px; }
+.conama-auto small { color: var(--cinza); font-size: 11px; }
+.conama-resultado { position: sticky; bottom: 0; background: #ECEFF1; border-radius: 12px; padding: 12px; font-size: 15px; text-align: center; margin-top: 10px; }
+.conama-resultado.verde { background: #E8F5E9; color: var(--verde); }
+.conama-resultado.amarelo { background: #FFF3E0; color: #E65100; }
+.conama-resultado.vermelho { background: #FFEBEE; color: var(--vermelho); }
+
 /* organizar por + export */
 .ordenar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 4px 0 8px; }
 .ordenar label { font-size: 13px; color: var(--cinza); display: flex; align-items: center; gap: 8px; }

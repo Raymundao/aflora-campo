@@ -8,10 +8,14 @@ import { tStudent } from "../data/tabela_t.js";
 export const FATOR_TOCOS_RAIZES = 0.1435; // 14,35% do volume aéreo (IEF)
 
 // Coeficientes CETEC 1995 por fitofisionomia: Vt = a·DAP^b·Ht^c.
+// As 3 fisionomias florestais (FES/FOD/FED) usam a MESMA equação (CETEC mata);
+// `conama` indica o grupo de limiares pra classificação de estágio (CONAMA 392).
 export const EQUACOES_VOLUME = {
-  mata_fes:   { a: 0.000074230, b: 1.707348, c: 1.16873,  r2: 0.973, rotulo: "Mata (FES)" },
-  cerradao:   { a: 0.000094001, b: 1.830398, c: 0.960913, r2: 0.964, rotulo: "Cerradão" },
-  cerrado_sr: { a: 0.000065661, b: 2.475293, c: 0.300022, r2: 0.981, rotulo: "Cerrado sensu restrito" },
+  mata_fes:   { a: 0.000074230, b: 1.707348, c: 1.16873,  r2: 0.973, rotulo: "Mata (FES)", conama: "fes_fod" },
+  mata_fod:   { a: 0.000074230, b: 1.707348, c: 1.16873,  r2: 0.973, rotulo: "Mata (FOD)", conama: "fes_fod" },
+  mata_fed:   { a: 0.000074230, b: 1.707348, c: 1.16873,  r2: 0.973, rotulo: "Mata (FED)", conama: "fed" },
+  cerradao:   { a: 0.000094001, b: 1.830398, c: 0.960913, r2: 0.964, rotulo: "Cerradão", conama: "cerrado" },
+  cerrado_sr: { a: 0.000065661, b: 2.475293, c: 0.300022, r2: 0.981, rotulo: "Cerrado sensu restrito", conama: "cerrado" },
 };
 
 export const dapDeCap = (capCm) => capCm / Math.PI;

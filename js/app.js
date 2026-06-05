@@ -14,7 +14,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v23"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v24"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -513,6 +513,141 @@ function telaConfig() {
 function estPorId(id) { return inv.estratos.find((e) => e.id === id); }
 
 // ============================================================
+// ============================================================
+// CONAMA 392 — classificação de estágio sucessional (FES/FOD e FED)
+// ============================================================
+const CONAMA_LIMIARES = {
+  fes_fod: {
+    rotulo: "Floresta Estacional Semidecidual / Ombrófila (FES/FOD)",
+    altura: { inicial: "até 5 m", medio: "5–12 m", avancado: "> 12 m", lo: 5, hi: 12 },
+    dap: { inicial: "até 10 cm", medio: "10–20 cm", avancado: "> 20 cm", lo: 10, hi: 20, cinzaLo: 18, cinzaHi: 20 },
+  },
+  fed: {
+    rotulo: "Floresta Estacional Decidual (FED)",
+    altura: { inicial: "até 3 m", medio: "3–6 m", avancado: "> 6 m", lo: 3, hi: 6 },
+    dap: { inicial: "até 8 cm", medio: "8–15 cm", avancado: "> 15 cm", lo: 8, hi: 15, cinzaLo: null, cinzaHi: null },
+  },
+};
+// Parâmetros qualitativos (iguais entre fisionomias). Indicadoras é tratado à parte.
+const CONAMA_QUALI = [
+  { key: "estratificacao", label: "Estratificação", inicial: "sem estratificação", medio: "dossel + sub-bosque", avancado: "dossel + sub-dossel + sub-bosque" },
+  { key: "grupo", label: "Grupo sucessional", inicial: "pioneiras", medio: "pioneiras + secundárias", avancado: "secundárias" },
+  { key: "trepadeiras", label: "Trepadeiras", inicial: "herbáceas", medio: "herbáceas/lenhosas", avancado: "lenhosas" },
+  { key: "epifitas", label: "Epífitas", inicial: "líquens/briófitas", medio: "angiospermas", avancado: "alta riqueza" },
+  { key: "dominancia", label: "Dominância de espécies", inicial: "alta", medio: "média", avancado: "baixa" },
+  { key: "serrapilheira", label: "Serrapilheira", inicial: "rala", medio: "média", avancado: "densa" },
+];
+const grupoConama = (estrato) => EQUACOES_VOLUME[estrato?.fitofisionomia]?.conama || null;
+
+function classeAltura(alturaMedia, g) {
+  if (alturaMedia == null) return null;
+  const a = CONAMA_LIMIARES[g].altura;
+  return alturaMedia <= a.lo ? "inicial" : alturaMedia <= a.hi ? "medio" : "avancado";
+}
+function classeDap(dapMedio, g) {
+  if (dapMedio == null) return null;
+  const d = CONAMA_LIMIARES[g].dap;
+  if (d.cinzaLo != null && dapMedio >= d.cinzaLo && dapMedio <= d.cinzaHi) return "ambiguo"; // zona cinza 18–20
+  return dapMedio <= d.lo ? "inicial" : dapMedio <= d.hi ? "medio" : "avancado";
+}
+
+// Classifica o estágio: maioria dos 9 parâmetros. DAP em zona cinza e indicadoras
+// "secundárias" são ambíguos (médio↔avançado): seguem a maioria dos firmes;
+// empate (aqui ou no geral) → AVANÇADO.
+function classificarEstagio(p, estrato) {
+  const g = grupoConama(estrato);
+  if (g !== "fes_fod" && g !== "fed") return null; // cerrado: CONAMA 423 (depois)
+  const mp = mediasParcela(p);
+  const c = p.conama || {};
+  const votos = [classeAltura(mp.alturaMedia, g), classeDap(mp.dapMedio, g)];
+  for (const q of CONAMA_QUALI) votos.push(c[q.key] || null);
+  votos.push(c.indicadoras === "pioneiras" ? "inicial" : c.indicadoras === "secundarias" ? "ambiguo" : null);
+  const cont = (arr, s) => arr.filter((v) => v === s).length;
+  const firmes = votos.filter((v) => v && v !== "ambiguo");
+  const resolvidos = votos.map((v) => v !== "ambiguo" ? v
+    : (cont(firmes, "avancado") >= cont(firmes, "medio") ? "avancado" : "medio")).filter(Boolean);
+  if (!resolvidos.length) return null;
+  let melhor = null, max = -1;
+  for (const s of ["avancado", "medio", "inicial"]) { // ordem garante empate → avançado
+    const n = cont(resolvidos, s);
+    if (n > max) { max = n; melhor = s; }
+  }
+  return { estagio: melhor, n: resolvidos.length, total: 9,
+    votos: { inicial: cont(resolvidos, "inicial"), medio: cont(resolvidos, "medio"), avancado: cont(resolvidos, "avancado") } };
+}
+const ROTULO_ESTAGIO = { inicial: "Inicial", medio: "Médio", avancado: "Avançado" };
+
+// TELA — formulário CONAMA 392 de estágio sucessional da parcela
+function telaConama(parcelaId) {
+  const p = inv.parcelas.find((x) => x.id === parcelaId);
+  if (!p) return telaParcela(parcelaId);
+  const estrato = estPorId(p.estratoId);
+  const g = grupoConama(estrato);
+  p.conama = p.conama || {};
+  const c = p.conama;
+  const mp = mediasParcela(p);
+
+  if (g !== "fes_fod" && g !== "fed") {
+    app.innerHTML = `${header("Estágio sucessional", () => telaParcela(parcelaId))}
+      <main><div class="info">A classificação CONAMA 392 é pra fisionomias florestais (FES/FOD/FED).
+      Este estrato é <b>${esc(EQUACOES_VOLUME[estrato?.fitofisionomia]?.rotulo || "—")}</b> (cerrado/savânica → CONAMA 423, em breve).</div></main>`;
+    ligarVoltar(() => telaParcela(parcelaId));
+    return;
+  }
+
+  const lim = CONAMA_LIMIARES[g];
+  const opcoesParam = (key, desc) => ["inicial", "medio", "avancado"].map((est) =>
+    `<button class="conama-opt ${c[key] === est ? "sel" : ""}" data-param="${key}" data-est="${est}">
+       <b>${ROTULO_ESTAGIO[est]}</b><span>${esc(desc[est])}</span></button>`).join("");
+  // altura/DAP: auto a partir das médias medidas (mostra a classe sugerida)
+  const aAlt = classeAltura(mp.alturaMedia, g);
+  const aDap = classeDap(mp.dapMedio, g);
+  const autoLinha = (label, valor, classe, d) => `<div class="conama-auto">
+    <div class="conama-auto-top"><b>${label}</b> ${valor} → <span class="badge ${classe && classe !== "ambiguo" ? "ok" : "nok"}">${classe ? (classe === "ambiguo" ? "zona 18–20 (decide pelos outros)" : ROTULO_ESTAGIO[classe]) : "sem dado"}</span></div>
+    <small>Inicial: ${d.inicial} · Médio: ${d.medio} · Avançado: ${d.avancado}</small></div>`;
+
+  const qualiHtml = CONAMA_QUALI.map((q) =>
+    `<div class="conama-param"><div class="conama-label">${q.label}</div>
+       <div class="conama-opts">${opcoesParam(q.key, q)}</div></div>`).join("");
+  const indHtml = `<div class="conama-param"><div class="conama-label">Espécies indicadoras</div>
+    <div class="conama-opts">
+      <button class="conama-opt ${c.indicadoras === "pioneiras" ? "sel" : ""}" data-param="indicadoras" data-est="pioneiras"><b>Pioneiras</b><span>estágio inicial</span></button>
+      <button class="conama-opt larga ${c.indicadoras === "secundarias" ? "sel" : ""}" data-param="indicadoras" data-est="secundarias"><b>Secundárias</b><span>médio ou avançado</span></button>
+    </div></div>`;
+
+  app.innerHTML = `${header("Estágio sucessional", () => telaParcela(parcelaId))}
+    <main>
+      <div class="info">${lim.rotulo} · parcela <b>${esc(p.rotulo || "")}</b></div>
+      ${autoLinha("Altura do dossel", mp.alturaMedia != null ? fmtNum(mp.alturaMedia, 1) + " m" : "—", aAlt, lim.altura)}
+      ${autoLinha("DAP médio", mp.dapMedio != null ? fmtNum(mp.dapMedio, 1) + " cm" : "—", aDap, lim.dap)}
+      ${qualiHtml}
+      ${indHtml}
+      <div class="conama-resultado" id="conama-res"></div>
+    </main>`;
+  ligarVoltar(() => telaParcela(parcelaId));
+
+  function render() {
+    const r = classificarEstagio(p, estrato);
+    const el = $("#conama-res");
+    if (!r) { el.innerHTML = "Marque os parâmetros pra sugerir o estágio."; el.className = "conama-resultado"; return; }
+    const cls = r.estagio === "avancado" ? "verde" : r.estagio === "medio" ? "amarelo" : "vermelho";
+    el.className = `conama-resultado ${cls}`;
+    el.innerHTML = `Estágio sugerido: <b>${ROTULO_ESTAGIO[r.estagio]}</b>
+      <small>(${r.n}/9 parâmetros · I:${r.votos.inicial} M:${r.votos.medio} A:${r.votos.avancado})</small>`;
+    c.estagioSugerido = r.estagio;
+  }
+  $$(".conama-opt").forEach((b) => {
+    b.onclick = () => {
+      const k = b.dataset.param, est = b.dataset.est;
+      c[k] = (c[k] === est) ? null : est; // toca de novo = desmarca
+      $$(`.conama-opt[data-param="${k}"]`).forEach((x) => x.classList.toggle("sel", x.dataset.est === c[k]));
+      agendarSalvar();
+      render();
+    };
+  });
+  render();
+}
+
 // TELA 4 — parcela (GPS + indivíduos)
 // ============================================================
 function telaParcela(parcelaId) {
@@ -543,6 +678,7 @@ function telaParcela(parcelaId) {
         </div>
         <div class="info">Volume da parcela: <b>${fmtNum(volM3, 4)} m³</b>${aHa ? " · " + fmtNum(volM3 / aHa, 1) + " m³/ha" : ""}</div>
         <div class="info">${mp.nFustes ? `DAP médio: <b>${fmtNum(mp.dapMedio, 1)} cm</b> · Altura média: <b>${fmtNum(mp.alturaMedia, 1)} m</b> <small>(${mp.nFustes} fuste${mp.nFustes === 1 ? "" : "s"})</small>` : "DAP/altura médios: aguardando primeiro fuste"}</div>
+        <button class="btn-sec largo" id="p-conama">🌳 Estágio sucessional (CONAMA) <span id="p-conama-est"></span></button>
       </div>
       <button class="btn-grande" id="novo-ind">+ Novo indivíduo</button>
       <div class="ordenar"><label>Organizar por <select id="ord-ind">${ordOpts}</select></label>
@@ -550,6 +686,11 @@ function telaParcela(parcelaId) {
       <div class="cards" id="cards-ind"></div>
     </main>`;
   ligarVoltar(() => telaParcelasDoEstrato(p.estratoId));
+  const rConama = classificarEstagio(p, est);
+  $("#p-conama-est").innerHTML = rConama
+    ? `<span class="badge ok">${ROTULO_ESTAGIO[rConama.estagio]}</span>`
+    : (grupoConama(est) ? "" : '<small>(cerrado: depois)</small>');
+  $("#p-conama").onclick = () => telaConama(p.id);
   $("#p-rotulo").oninput = (e) => { p.rotulo = e.target.value; agendarSalvar(); };
   $("#p-estrato").onchange = (e) => { p.estratoId = e.target.value; agendarSalvar(); renderCardsInd(); };
   $("#p-gps").onclick = () => marcarGPS(p);
