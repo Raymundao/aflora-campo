@@ -14,7 +14,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v26"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v27"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -82,6 +82,7 @@ function header(titulo, voltarFn) {
   return `<header class="topo">
     ${voltarFn ? '<button class="btn-voltar" id="btn-voltar">‹</button>' : '<span class="logo">🌳</span>'}
     <h1>${esc(titulo)}</h1>
+    <button class="btn-sol" id="btn-sol" aria-label="Modo sol (alto contraste)" title="Modo sol">☀️</button>
     <span class="status-salvo ok" id="status-salvo">✓ salvo</span>
   </header>`;
 }
@@ -1122,6 +1123,16 @@ async function exportarZipParcelas(invId) {
 }
 
 // ---------- boot ----------
+// Modo sol (alto contraste + fonte maior) — togglável, persiste em localStorage.
+// Delegado no document porque o cabeçalho (com o botão) é re-renderizado a cada tela.
+if (localStorage.getItem("aflora-sol") === "1") document.body.classList.add("sol");
+document.addEventListener("click", (e) => {
+  if (e.target.closest && e.target.closest("#btn-sol")) {
+    const on = document.body.classList.toggle("sol");
+    localStorage.setItem("aflora-sol", on ? "1" : "0");
+  }
+});
+
 async function iniciar() {
   await db.pedirPersistencia();
   if ("serviceWorker" in navigator) {
