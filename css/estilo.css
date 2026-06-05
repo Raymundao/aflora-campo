@@ -98,6 +98,12 @@ button { font: inherit; cursor: pointer; border-radius: 10px; }
 .foto-del { position: absolute; top: 3px; right: 3px; background: rgba(198,40,40,.9); color: #fff;
   border: 0; width: 24px; height: 24px; border-radius: 50%; font-size: 13px; line-height: 1; }
 
+/* categorias de foto da parcela */
+.cat-sec { background: var(--card); border: 1px solid var(--borda); border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; }
+.cat-head { display: flex; align-items: center; justify-content: space-between; }
+.cat-head b { color: var(--verde); }
+.vazio-min { color: var(--cinza); font-size: 13px; margin: 6px 0 0; }
+
 /* organizar por + export */
 .ordenar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 4px 0 8px; }
 .ordenar label { font-size: 13px; color: var(--cinza); display: flex; align-items: center; gap: 8px; }
@@ -115,6 +121,7 @@ button { font: inherit; cursor: pointer; border-radius: 10px; }
 /* autocomplete de espécie */
 .autocomplete { position: relative; display: flex; align-items: stretch; }
 .autocomplete > input { flex: 1; border-radius: 10px 0 0 10px; }
+.ac-cam { flex: 0 0 44px; border: 1px solid var(--borda); border-left: 0; background: #fff; font-size: 17px; }
 .ac-toggle { flex: 0 0 46px; border: 1px solid var(--borda); border-left: 0; border-radius: 0 10px 10px 0; background: #eef3ee; font-size: 18px; color: var(--verde); }
 .ac-lista { position: absolute; top: 100%; left: 0; right: 0; z-index: 40; background: #fff; border: 1px solid var(--borda); border-top: 0; border-radius: 0 0 10px 10px; max-height: 280px; overflow-y: auto; box-shadow: 0 8px 18px rgba(0,0,0,.18); }
 .ac-item { display: block; width: 100%; text-align: left; padding: 12px 14px; border: 0; border-bottom: 1px solid #eee; background: #fff; font-size: 15px; }

@@ -14,7 +14,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v20"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v21"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -245,18 +245,7 @@ async function telaInventario(id) {
         <button class="btn-sec" id="cfg">⚙ Config</button>
       </div>
       <div class="cards">${parcelasHtml}</div>
-      <h3 class="sec-export">Exportar / Compartilhar</h3>
-      <div class="acoes-linha wrap">
-        <button class="btn-sec" id="exp-xlsx">⬇ XLSX</button>
-        <button class="btn-sec" id="exp-csv">⬇ CSV</button>
-        <button class="btn-sec" id="exp-json">⬇ JSON</button>
-      </div>
-      <div class="acoes-linha wrap">
-        <button class="btn-sec" id="exp-fotos-parc">📷 Fotos parcelas (ZIP)</button>
-        <button class="btn-sec" id="exp-fotos-esp2">📷 Fotos espécies (ZIP)</button>
-      </div>
-      <button class="btn-grande" id="prep-share">↗ Preparar p/ compartilhar</button>
-      <div id="share-panel"></div>
+      <button class="btn-sec largo" id="ir-exportar">📤 Exportar / Compartilhar</button>
     </main>`;
   ligarVoltar(telaInventarios);
   $("#nova-parc").onclick = async () => {
@@ -268,15 +257,40 @@ async function telaInventario(id) {
   };
   $("#cfg").onclick = telaConfig;
   $("#ir-especies").onclick = () => telaEspecies(inv.id);
+  $("#ir-exportar").onclick = () => telaExportar(inv.id);
   $$("[data-fotos-parc]").forEach((el) => { el.onclick = () => telaFotosParcela(el.dataset.fotosParc); });
-  $("#exp-fotos-parc").onclick = () => exportarZipParcelas(inv.id);
-  $("#exp-fotos-esp2").onclick = () => exportarZipEspecies(inv.id);
+  $$("[data-parc]").forEach((el) => { el.onclick = () => telaParcela(el.dataset.parc); });
+}
+
+// ============================================================
+// TELA — Exportar / Compartilhar (consolidada pra não poluir o inventário)
+// ============================================================
+function telaExportar(invId) {
+  app.innerHTML = `${header("Exportar / Compartilhar", () => telaInventario(invId))}
+    <main>
+      <h3 class="sec-export">Planilha de dados</h3>
+      <div class="acoes-linha wrap">
+        <button class="btn-sec" id="exp-xlsx">⬇ XLSX</button>
+        <button class="btn-sec" id="exp-csv">⬇ CSV</button>
+        <button class="btn-sec" id="exp-json">⬇ JSON (backup)</button>
+      </div>
+      <button class="btn-grande" id="prep-share">↗ Preparar p/ compartilhar (XLSX)</button>
+      <div id="share-panel"></div>
+
+      <h3 class="sec-export">Fotos (ZIP)</h3>
+      <div class="acoes-linha wrap">
+        <button class="btn-sec" id="exp-fotos-esp2">📷 Espécies</button>
+        <button class="btn-sec" id="exp-fotos-parc">📷 Parcelas</button>
+      </div>
+    </main>`;
+  ligarVoltar(() => telaInventario(invId));
   $("#exp-json").onclick = () => exportarJSON(inv);
   $("#exp-csv").onclick = () => exportarCSV(inv);
   $("#exp-xlsx").onclick = () => exportarXLSX(inv);
-  // Compartilhar em 2 passos (padrão AlpineQuest): 1) "Preparar" MONTA o arquivo;
-  // 2) "Enviar" dispara navigator.share. Como o share vira um toque isolado, sem
-  // trabalho pesado antes, o gesto fica "fresco" e o Android não dá NotAllowedError.
+  $("#exp-fotos-esp2").onclick = () => exportarZipEspecies(invId);
+  $("#exp-fotos-parc").onclick = () => exportarZipParcelas(invId);
+  // Compartilhar em 2 passos (padrão AlpineQuest): "Preparar" MONTA o arquivo;
+  // "Enviar" dispara navigator.share — gesto isolado, sem trabalho pesado antes.
   $("#prep-share").onclick = () => {
     const panel = $("#share-panel");
     panel.innerHTML = '<div class="info">Montando a planilha…</div>';
@@ -290,45 +304,24 @@ async function telaInventario(id) {
           <button class="btn-grande destaque" id="enviar">↗ Enviar pra um app</button>
           <button class="btn-sec" id="baixar-share">⬇ Baixar</button>
         </div>
-        <button class="btn-sec largo" id="testar-share">🔎 testar envio simples (diagnóstico)</button>
       </div>`;
       $("#enviar").onclick = () => {
         const { nome, blob, file, mime } = dados;
         if (navigator.share) {
-          // payload mínimo: só o arquivo (sem title — a combinação trava em alguns Androids)
           navigator.share({ files: [file] }).catch((e) => {
             if (e && e.name === "AbortError") return; // usuário fechou o menu
             baixar(nome, blob, mime);
-            const modo = window.matchMedia("(display-mode: standalone)").matches ? "app instalado" : "navegador";
-            const pode = navigator.canShare ? navigator.canShare({ files: [file] }) : "?";
-            alert("Não abriu o menu — baixei a planilha.\n\nManda esse print:\n"
-              + APP_VERSION + " · " + modo + " · canShareArq=" + pode + "\n"
-              + (e?.name || "") + ": " + (e?.message || "") + "\n" + navigator.userAgent.slice(0, 90));
+            alert("Seu navegador bloqueia anexar arquivo no compartilhar — então baixei a planilha "
+              + "na pasta Downloads. Abra o app Downloads/Arquivos e compartilhe de lá pro WhatsApp.");
           });
         } else {
           baixar(nome, blob, mime);
-          alert("Este navegador não compartilha arquivos — baixei a planilha. (" + APP_VERSION + ")");
+          alert("Baixei a planilha na pasta Downloads — compartilhe de lá.");
         }
       };
       $("#baixar-share").onclick = () => baixar(dados.nome, dados.blob, dados.mime);
-      // DIAGNÓSTICO: tenta compartilhar só um TEXTO (sem arquivo). Se abrir o menu,
-      // o problema é específico de ARQUIVO; se nem texto abrir, é o share todo.
-      $("#testar-share").onclick = () => {
-        if (!navigator.share) { alert("navigator.share não existe aqui. (" + APP_VERSION + ")"); return; }
-        navigator.share({ title: "Teste Aflora", text: "Teste de compartilhamento 123" })
-          .then(() => alert("✓ ABRIU o menu com TEXTO! Então o problema é só com ARQUIVO — vou trocar a estratégia. (" + APP_VERSION + ")"))
-          .catch((e) => {
-            if (e && e.name === "AbortError") {
-              alert("✓ ABRIU o menu (você cancelou). Texto funciona → o problema é só ARQUIVO. (" + APP_VERSION + ")");
-              return;
-            }
-            alert("✗ Texto TAMBÉM falhou:\n" + (e?.name || "") + ": " + (e?.message || "")
-              + "\nEntão é o compartilhamento todo bloqueado. (" + APP_VERSION + ")");
-          });
-      };
     }, 30);
   };
-  $$("[data-parc]").forEach((el) => { el.onclick = () => telaParcela(el.dataset.parc); });
 }
 
 // ============================================================
@@ -536,10 +529,10 @@ function telaIndividuo(parcelaId, individuoId) {
       <label class="campo">Espécie
         <div class="autocomplete">
           <input id="i-especie" value="${esc(ind.especie)}" autocomplete="off" placeholder="Digite ou toque em ▾">
+          <button type="button" class="ac-cam" id="i-foto" aria-label="Foto da espécie">📷</button>
           <button type="button" class="ac-toggle" id="i-especie-toggle" aria-label="Ver espécies">▾</button>
           <div class="ac-lista" id="i-especie-lista" hidden></div>
         </div></label>
-      <button class="btn-foto-mini" id="i-foto">📷 foto da espécie <span id="i-foto-n"></span></button>
 
       <h3>Fustes <small>(CAP em cm, altura em m)</small></h3>
       <div id="fustes"></div>
@@ -641,22 +634,13 @@ function telaIndividuo(parcelaId, individuoId) {
     $("#i-especie"), $("#i-especie-toggle"), $("#i-especie-lista"),
     () => especiesDoInventario(inv, ind.id), setEspecie,
   );
-  // atalho de foto da espécie: vai direto pro registro de Espécies
-  async function atualizarFotoN() {
-    const span = $("#i-foto-n");
-    const nome = (ind.especie || "").trim();
-    if (!span) return;
-    if (!nome) { span.textContent = ""; return; }
-    const fs = await db.fotosDoInventario(inv.id);
-    const n = fs.filter((f) => f.tipo === "especie" && f.refKey === nome).length;
-    span.textContent = n ? "(" + n + ")" : "";
-  }
-  atualizarFotoN();
+  // atalho de foto da espécie: tira foto JÁ marcada com a parcela atual e manda
+  // pro registro de Espécies (organiza por espécie → parcela).
   $("#i-foto").onclick = async () => {
     const nome = (ind.especie || "").trim();
     if (!nome) { alert("Preencha a espécie antes de tirar a foto."); return; }
-    const foto = await capturarFoto(inv.id, "especie", nome);
-    if (foto) { adicionarEspecie(inv, nome); await salvarJa(); atualizarFotoN(); }
+    const foto = await capturarFoto(inv.id, "especie", nome, { parcelaId: p.id });
+    if (foto) { adicionarEspecie(inv, nome); await salvarJa(); }
   };
   $("#add-fuste").onclick = async () => { ind.fustes.push(novoFuste()); await salvarJa(); renderFustes(); volVivo(); };
   $("#del-ind").onclick = async () => {
@@ -703,7 +687,10 @@ function capturarFoto(invId, tipo, refKey, extra = {}) {
         const foto = {
           id: "foto_" + Date.now().toString(36) + "_" + Math.floor(Math.random() * 1e9).toString(36),
           invId, tipo, refKey, blob,
-          lat: extra.lat ?? null, lon: extra.lon ?? null, capturadaEm: Date.now(),
+          lat: extra.lat ?? null, lon: extra.lon ?? null,
+          parcelaId: extra.parcelaId ?? null,   // fotos de espécie: em qual parcela foi tirada ("" = avulsa)
+          categoria: extra.categoria ?? null,   // fotos de parcela: Geral/Serrapilheira/Dossel/Sub-bosque
+          capturadaEm: Date.now(),
         };
         await db.salvarFoto(foto);
         resolve(foto);
@@ -770,19 +757,42 @@ async function telaEspecies(invId) {
   $("#exp-fotos-esp").onclick = () => exportarZipEspecies(invId);
 }
 
-// TELA — detalhe da espécie (renomear + fotos)
+const CATEGORIAS_FOTO = ["Geral", "Serrapilheira", "Dossel", "Sub-bosque"];
+
+// TELA — detalhe da espécie: renomear + ocorrência + pastas de parcela
 async function telaEspecie(invId, nome) {
   inv = await db.obterInventario(invId);
   if (!inv) return telaInventarios();
   revogarUrls();
   let nomeAtual = nome;
+  const rotulo = {};
+  for (const p of inv.parcelas) rotulo[p.id] = p.rotulo || p.id;
   const fotos = (await db.fotosDoInventario(invId)).filter((f) => f.tipo === "especie" && f.refKey === nome);
+  // ocorrência: parcelas onde há indivíduo com esta espécie
+  const ocorre = [];
+  for (const p of inv.parcelas) {
+    const n = p.individuos.filter((ind) => (ind.especie || "").trim() === nome).length;
+    if (n) ocorre.push(`${rotulo[p.id]} (${n})`);
+  }
+  // pastas de fotos por parcela ("" = avulsa, fora de parcela)
+  const porParc = {};
+  for (const f of fotos) { const k = f.parcelaId || ""; (porParc[k] = porParc[k] || []).push(f); }
+  const chaves = Object.keys(porParc).sort();
+  const pastasHtml = chaves.length ? chaves.map((k) =>
+    `<div class="card" data-pasta="${esc(k)}"><div class="card-corpo">
+       <div class="card-nome">📁 ${k ? esc(rotulo[k] || k) : "Sem parcela (avulsa)"}</div>
+       <div class="card-sub">${porParc[k].length} foto(s)</div></div></div>`).join("")
+    : '<p class="vazio">Nenhuma foto. Toque em "Tirar foto" ou use o 📷 ao registrar o indivíduo.</p>';
   app.innerHTML = `${header("Espécie", () => telaEspecies(invId))}
     <main class="form">
-      <label class="campo">Nome da espécie <small>(editar renomeia em todo o inventário)</small>
+      <label class="campo">Nome da espécie <small>(editar renomeia no inventário todo)</small>
         <input id="esp-nome" value="${esc(nome)}"></label>
-      <button class="btn-grande" id="esp-foto">📷 Tirar foto</button>
-      <div id="esp-galeria">${galeriaHTML(fotos)}</div>
+      <div class="info">${ocorre.length
+        ? "Ocorre em: <b>" + esc(ocorre.join(", ")) + "</b>"
+        : "Espécie avulsa — não registrada em parcelas (ex.: herbácea / fora das parcelas)."}</div>
+      <button class="btn-grande" id="esp-foto">📷 Tirar foto avulsa</button>
+      <h3>Fotos por parcela</h3>
+      <div class="cards">${pastasHtml}</div>
     </main>`;
   ligarVoltar(() => telaEspecies(invId));
   $("#esp-nome").onchange = async (e) => {
@@ -795,13 +805,37 @@ async function telaEspecie(invId, nome) {
   };
   $("#esp-foto").onclick = async () => {
     const nomeUse = $("#esp-nome").value.trim() || nomeAtual;
-    const foto = await capturarFoto(invId, "especie", nomeUse);
+    const foto = await capturarFoto(invId, "especie", nomeUse, { parcelaId: "" });
     if (foto) { adicionarEspecie(inv, nomeUse); await salvarJa(); telaEspecie(invId, nomeUse); }
   };
-  ligarDelFoto("#esp-galeria", () => telaEspecie(invId, $("#esp-nome").value.trim() || nomeAtual));
+  $$("[data-pasta]").forEach((el) => { el.onclick = () => telaEspecieFotos(invId, nomeAtual, el.dataset.pasta); });
 }
 
-// TELA — fotos de uma parcela (coords carimbadas só na exportação)
+// TELA — fotos de uma espécie dentro de uma parcela (ou avulsa)
+async function telaEspecieFotos(invId, nome, parcelaKey) {
+  inv = await db.obterInventario(invId);
+  if (!inv) return telaInventarios();
+  revogarUrls();
+  const rotulo = {};
+  for (const p of inv.parcelas) rotulo[p.id] = p.rotulo || p.id;
+  const titulo = parcelaKey ? (rotulo[parcelaKey] || parcelaKey) : "Sem parcela";
+  const fotos = (await db.fotosDoInventario(invId))
+    .filter((f) => f.tipo === "especie" && f.refKey === nome && (f.parcelaId || "") === parcelaKey);
+  app.innerHTML = `${header(titulo, () => telaEspecie(invId, nome))}
+    <main>
+      <div class="info"><i>${esc(nome)}</i> · ${esc(titulo)}</div>
+      <button class="btn-grande" id="ef-foto">📷 Tirar foto aqui</button>
+      <div id="ef-galeria">${galeriaHTML(fotos)}</div>
+    </main>`;
+  ligarVoltar(() => telaEspecie(invId, nome));
+  $("#ef-foto").onclick = async () => {
+    const foto = await capturarFoto(invId, "especie", nome, { parcelaId: parcelaKey });
+    if (foto) telaEspecieFotos(invId, nome, parcelaKey);
+  };
+  ligarDelFoto("#ef-galeria", () => telaEspecieFotos(invId, nome, parcelaKey));
+}
+
+// TELA — fotos de uma parcela por categoria (Geral/Serrapilheira/Dossel/Sub-bosque)
 async function telaFotosParcela(parcelaId) {
   if (!inv) return telaInventarios();
   const p = inv.parcelas.find((x) => x.id === parcelaId);
@@ -815,55 +849,63 @@ async function telaFotosParcela(parcelaId) {
       (pos) => { ultimaCoord = { lat: pos.coords.latitude, lon: pos.coords.longitude }; },
       () => {}, { enableHighAccuracy: true, timeout: 10000 });
   }
+  const secoes = CATEGORIAS_FOTO.map((cat) => {
+    const fc = fotos.filter((f) => (f.categoria || "Geral") === cat);
+    return `<div class="cat-sec">
+      <div class="cat-head"><b>${cat}</b><button class="btn-foto" data-cat="${cat}">📷</button></div>
+      ${fc.length ? galeriaHTML(fc) : '<p class="vazio-min">— sem fotos</p>'}
+    </div>`;
+  }).join("");
   app.innerHTML = `${header("Fotos · " + (p.rotulo || "parcela"), () => telaInventario(inv.id))}
     <main>
-      <div class="info">As coordenadas e o nome da parcela são carimbados na foto <b>só na exportação</b> — pode renomear depois sem perder nada.</div>
-      <button class="btn-grande" id="par-foto">📷 Tirar foto da parcela</button>
-      <div id="par-galeria">${galeriaHTML(fotos)}</div>
+      <div class="info">Escolha o tipo e toque em 📷. Nome, coordenadas e data são carimbados <b>só na exportação</b>.</div>
+      ${secoes}
     </main>`;
   ligarVoltar(() => telaInventario(inv.id));
-  $("#par-foto").onclick = async () => {
-    const foto = await capturarFoto(inv.id, "parcela", parcelaId, ultimaCoord);
-    if (foto) telaFotosParcela(parcelaId);
-  };
-  ligarDelFoto("#par-galeria", () => telaFotosParcela(parcelaId));
+  $$("[data-cat]").forEach((el) => {
+    el.onclick = async () => {
+      const foto = await capturarFoto(inv.id, "parcela", parcelaId, { ...ultimaCoord, categoria: el.dataset.cat });
+      if (foto) telaFotosParcela(parcelaId);
+    };
+  });
+  ligarDelFoto("main", () => telaFotosParcela(parcelaId));
 }
 
-// EXPORT — ZIP de fotos por espécie (pasta = nome da espécie)
+// EXPORT — ZIP fotos de espécies: <espécie>/<parcela ou Sem parcela>/<espécie>_N.jpg
 async function exportarZipEspecies(invId) {
   const inv2 = await db.obterInventario(invId);
   const fotos = (await db.fotosDoInventario(invId)).filter((f) => f.tipo === "especie");
   if (!fotos.length) { alert("Nenhuma foto de espécie pra exportar."); return; }
-  const porNome = {};
-  for (const f of fotos) (porNome[f.refKey] = porNome[f.refKey] || []).push(f);
+  const rotulo = {};
+  for (const p of inv2.parcelas) rotulo[p.id] = p.rotulo || p.id;
   const arquivos = [];
-  for (const [nome, fs] of Object.entries(porNome)) {
-    const pasta = nomeSeguro(nome);
-    for (let i = 0; i < fs.length; i++) {
-      arquivos.push({ nome: `${pasta}/${pasta}_${i + 1}.jpg`, dados: await fs[i].blob.arrayBuffer() });
-    }
+  const cont = {};
+  for (const f of fotos) {
+    const esp = nomeSeguro(f.refKey);
+    const sub = f.parcelaId ? nomeSeguro(rotulo[f.parcelaId] || f.parcelaId) : "Sem parcela";
+    const chave = esp + "/" + sub;
+    cont[chave] = (cont[chave] || 0) + 1;
+    arquivos.push({ nome: `${esp}/${sub}/${esp}_${cont[chave]}.jpg`, dados: await f.blob.arrayBuffer() });
   }
   baixar(`${nomeSeguro(inv2.nome)}_fotos_especies.zip`, criarZip(arquivos), "application/zip");
 }
 
-// EXPORT — ZIP de fotos por parcela (pasta = parcela; carimba nome+coords+data)
+// EXPORT — ZIP fotos de parcelas: <categoria>/<parcela>/<parcela>_N.jpg (carimba nome+cat+coords+data)
 async function exportarZipParcelas(invId) {
   const inv2 = await db.obterInventario(invId);
   const fotos = (await db.fotosDoInventario(invId)).filter((f) => f.tipo === "parcela");
   if (!fotos.length) { alert("Nenhuma foto de parcela pra exportar."); return; }
   const rotulo = {};
   for (const p of inv2.parcelas) rotulo[p.id] = p.rotulo || p.id;
-  const porParc = {};
-  for (const f of fotos) (porParc[f.refKey] = porParc[f.refKey] || []).push(f);
   const arquivos = [];
-  for (const [pid, fs] of Object.entries(porParc)) {
-    const rot = rotulo[pid] || pid;
-    const pasta = nomeSeguro(rot);
-    for (let i = 0; i < fs.length; i++) {
-      const f = fs[i];
-      const carimbada = await carimbarTexto(f.blob, [rot, coordTexto(f.lat, f.lon), dataTexto(f.capturadaEm)]);
-      arquivos.push({ nome: `${pasta}/${pasta}_${i + 1}.jpg`, dados: await carimbada.arrayBuffer() });
-    }
+  const cont = {};
+  for (const f of fotos) {
+    const rot = rotulo[f.refKey] || f.refKey;
+    const cat = f.categoria || "Geral";
+    const chave = nomeSeguro(cat) + "/" + nomeSeguro(rot);
+    cont[chave] = (cont[chave] || 0) + 1;
+    const carimbada = await carimbarTexto(f.blob, [`${rot} · ${cat}`, coordTexto(f.lat, f.lon), dataTexto(f.capturadaEm)]);
+    arquivos.push({ nome: `${chave}/${nomeSeguro(rot)}_${cont[chave]}.jpg`, dados: await carimbada.arrayBuffer() });
   }
   baixar(`${nomeSeguro(inv2.nome)}_fotos_parcelas.zip`, criarZip(arquivos), "application/zip");
 }

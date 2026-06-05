@@ -111,12 +111,21 @@ export async function fotosDoInventario(invId) {
 }
 
 export async function excluirFotosDoInventario(invId) {
-  const db = await abrir();
-  const tx = db.transaction(FOTOS, "readwrite");
-  const idx = tx.objectStore(FOTOS).index("invId");
-  const chaves = await pedido(idx.getAllKeys(invId));
-  for (const k of chaves) tx.objectStore(FOTOS).delete(k);
-  return new Promise((res, rej) => { tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); });
+  const dbi = await abrir();
+  // 1) lê as chaves numa transação de leitura (completa antes da escrita)
+  const chaves = await pedido(
+    dbi.transaction(FOTOS, "readonly").objectStore(FOTOS).index("invId").getAllKeys(invId),
+  );
+  if (!chaves.length) return;
+  // 2) apaga numa transação NOVA, sem await no meio (não invalida a transação)
+  const tx = dbi.transaction(FOTOS, "readwrite");
+  const os = tx.objectStore(FOTOS);
+  for (const k of chaves) os.delete(k);
+  return new Promise((res, rej) => {
+    tx.oncomplete = () => res();
+    tx.onerror = () => rej(tx.error);
+    tx.onabort = () => rej(tx.error);
+  });
 }
 
 // Renomeia o refKey de fotos (cascata ao renomear uma espécie).
