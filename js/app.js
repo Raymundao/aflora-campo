@@ -4,7 +4,7 @@ import * as db from "./db.js";
 import {
   novoInventario, novoEstrato, novaParcela, novoIndividuo, novoFuste,
   resultadosPorEstrato, areaParcelaHa, fmtNum, outliersDoEstrato,
-  ESTAGIOS, rotuloEstrato, mediasParcela,
+  ESTAGIOS, rotuloEstrato, mediasParcela, volumeParcelaM3,
   semAcento, especiesDoInventario, individuosOrdenados,
   registroEspecies, adicionarEspecie, renomearEspecie,
 } from "./modelo.js";
@@ -14,7 +14,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v28"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v29"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -29,6 +29,50 @@ document.addEventListener("click", (ev) => {
     if (wrap && !wrap.contains(ev.target)) l.hidden = true;
   });
 });
+
+// ---------- lightbox de foto (toca a miniatura → abre em tela cheia) ----------
+// Handler único delegado: qualquer <img> dentro de .foto-item abre ampliada.
+function abrirLightbox(src) {
+  const ov = document.createElement("div");
+  ov.className = "lightbox";
+  ov.innerHTML = `<img src="${src}" alt=""><button class="lightbox-fechar" aria-label="Fechar">✕</button>`;
+  ov.onclick = () => ov.remove();
+  document.body.appendChild(ov);
+}
+document.addEventListener("click", (ev) => {
+  const img = ev.target.closest && ev.target.closest(".foto-item img");
+  if (img && img.src) { ev.stopPropagation(); abrirLightbox(img.src); }
+});
+
+// ---------- toque longo (segurar) → callback (ex.: excluir) ----------
+// Funciona com toque (touchstart/end) e mouse (pra testar no desktop). ~550 ms.
+// Cancela se o dedo se mover (scroll) ou soltar antes do tempo. Quando dispara,
+// liga `suprimirClique` por 700 ms pra o clique de abrir não vir logo atrás.
+let suprimirClique = false;
+function ligarPressLongo(el, onLongPress) {
+  let timer = null, alvoMovido = false;
+  const inicio = (ev) => {
+    alvoMovido = false;
+    timer = setTimeout(() => {
+      timer = null;
+      if (!alvoMovido) {
+        suprimirClique = true;
+        setTimeout(() => { suprimirClique = false; }, 700);
+        if (navigator.vibrate) navigator.vibrate(30);
+        onLongPress(ev);
+      }
+    }, 550);
+  };
+  const cancelar = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  el.addEventListener("touchstart", inicio, { passive: true });
+  el.addEventListener("touchmove", () => { alvoMovido = true; cancelar(); }, { passive: true });
+  el.addEventListener("touchend", cancelar);
+  el.addEventListener("touchcancel", cancelar);
+  el.addEventListener("mousedown", inicio);
+  el.addEventListener("mousemove", () => { alvoMovido = true; cancelar(); });
+  el.addEventListener("mouseup", cancelar);
+  el.addEventListener("mouseleave", cancelar);
+}
 
 // Autocomplete custom (o <datalist> nativo não sugere no Android). Setinha abre
 // a lista toda; digitar filtra por prefixo (depois substring), sem acento.
@@ -240,18 +284,38 @@ async function telaInventario(id) {
 }
 
 // Completude do estrato (% pronto) = média de: erro amostral batido · campos das
-// parcelas preenchidos · fotos de parcela nos 4 tipos.
+// parcelas preenchidos · fotos de parcela nos 4 tipos. Também devolve `pendencias`
+// (lista do que falta, por parcela) pro botão ⓘ explicar onde está o buraco.
 function completudeEstrato(inv, estrato, resErro, fotos) {
   const parcelas = inv.parcelas.filter((p) => p.estratoId === estrato.id);
   const alvo = inv.config.erroAlvoPct;
   const c1 = (resErro && resErro.erro && resErro.erro.erro_rel_pct <= alvo) ? 1 : 0;
+  const pendencias = [];
   let completas = 0;
   for (const p of parcelas) {
+    const rot = p.rotulo || "(sem rótulo)";
+    const faltas = [];
+    if (p.lat == null || p.lon == null) faltas.push("GPS não marcado");
+    if (!p.individuos.length) {
+      faltas.push("nenhum indivíduo");
+    } else {
+      p.individuos.forEach((ind, i) => {
+        const nome = ind.placa || "#" + (i + 1);
+        if (!(ind.especie || "").trim()) faltas.push(`indivíduo ${nome} sem espécie`);
+        if (!ind.fustes.length || ind.fustes.some((f) => f.capCm == null || f.alturaM == null))
+          faltas.push(`indivíduo ${nome} sem CAP/altura`);
+      });
+    }
+    const cats = new Set(fotos.filter((f) => f.tipo === "parcela" && f.refKey === p.id).map((f) => f.categoria || "Geral"));
+    const fotosFaltando = CATEGORIAS_FOTO.filter((c) => !cats.has(c));
+    if (fotosFaltando.length) faltas.push(`fotos faltando: ${fotosFaltando.join(", ")}`);
+
     const gpsOk = p.lat != null && p.lon != null;
     const indOk = p.individuos.length >= 1 && p.individuos.every((ind) =>
       (ind.especie || "").trim() && ind.fustes.length >= 1
       && ind.fustes.every((f) => f.capCm != null && f.alturaM != null));
     if (gpsOk && indOk) completas++;
+    if (faltas.length) pendencias.push({ parcela: rot, faltas });
   }
   const c2 = parcelas.length ? completas / parcelas.length : 0;
   let somaFotos = 0;
@@ -260,6 +324,12 @@ function completudeEstrato(inv, estrato, resErro, fotos) {
     somaFotos += CATEGORIAS_FOTO.filter((c) => cats.has(c)).length / CATEGORIAS_FOTO.length;
   }
   const c3 = parcelas.length ? somaFotos / parcelas.length : 0;
+  // pendência de nível-estrato (erro amostral) entra no topo da lista
+  if (!c1) {
+    if (parcelas.length < 2) pendencias.unshift({ parcela: "Erro amostral", faltas: ["precisa de 2+ parcelas pra calcular"] });
+    else if (resErro && resErro.erro) pendencias.unshift({ parcela: "Erro amostral", faltas: [`${fmtNum(resErro.erro.erro_rel_pct, 1)}% — acima do alvo de ${fmtNum(alvo, 0)}%`] });
+    else pendencias.unshift({ parcela: "Erro amostral", faltas: ["defina a área da parcela (Config)"] });
+  }
   return {
     pct: Math.round(((c1 + c2 + c3) / 3) * 100),
     itens: [
@@ -267,6 +337,7 @@ function completudeEstrato(inv, estrato, resErro, fotos) {
       { label: "Campos", frac: c2 },
       { label: "Fotos parcela", frac: c3 },
     ],
+    pendencias,
   };
 }
 
@@ -274,10 +345,20 @@ function barraCompletude(comp) {
   const cls = comp.pct >= 100 ? "verde" : comp.pct >= 60 ? "amarelo" : "vermelho";
   const itens = comp.itens.map((i) =>
     `<span class="compl-item ${i.frac >= 1 ? "ok" : "pend"}">${i.frac >= 1 ? "✓" : Math.round(i.frac * 100) + "%"} ${i.label}</span>`).join("");
+  const pend = comp.pendencias || [];
+  // ⓘ expansível (nativo <details>): lista onde estão os buracos, por parcela.
+  const detalhe = pend.length
+    ? `<details class="compl-det" onclick="event.stopPropagation()">
+        <summary>ⓘ o que falta (${pend.length})</summary>
+        <ul class="compl-faltas">${pend.map((d) =>
+          `<li><b>${esc(d.parcela)}</b>: ${esc(d.faltas.join("; "))}</li>`).join("")}</ul>
+      </details>`
+    : "";
   return `<div class="compl">
     <div class="compl-top">Completude: <b>${comp.pct}%</b></div>
     <div class="barra"><div class="barra-fill ${cls}" style="width:${comp.pct}%"></div></div>
     <div class="compl-itens">${itens}</div>
+    ${detalhe}
   </div>`;
 }
 
@@ -345,7 +426,21 @@ async function telaParcelasDoEstrato(estratoId) {
     telaParcela(p.id);
   };
   $$("[data-fotos-parc]").forEach((el) => { el.onclick = () => telaFotosParcela(el.dataset.fotosParc); });
-  $$("[data-parc]").forEach((el) => { el.onclick = () => telaParcela(el.dataset.parc); });
+  $$("[data-parc]").forEach((el) => {
+    el.onclick = () => { if (suprimirClique) return; telaParcela(el.dataset.parc); };
+    // segurar a parcela → excluir (com as fotos de parcela dela)
+    ligarPressLongo(el, async () => {
+      const pid = el.dataset.parc;
+      const p = inv.parcelas.find((x) => x.id === pid);
+      if (!p) return;
+      if (!confirm(`Excluir a parcela "${p.rotulo || ""}" e suas fotos? Não dá pra desfazer.`)) return;
+      inv.parcelas = inv.parcelas.filter((x) => x.id !== pid);
+      const fts = (await db.fotosDoInventario(inv.id)).filter((f) => f.tipo === "parcela" && f.refKey === pid);
+      for (const f of fts) await db.excluirFoto(f.id);
+      await salvarJa();
+      telaParcelasDoEstrato(estratoId);
+    });
+  });
 }
 
 // ============================================================
@@ -560,7 +655,10 @@ function classificarEstagio(p, estrato) {
   if (g !== "fes_fod" && g !== "fed") return null; // cerrado: CONAMA 423 (depois)
   const mp = mediasParcela(p);
   const c = p.conama || {};
-  const votos = [classeAltura(mp.alturaMaxima, g), classeDap(mp.dapMedio, g)];
+  // medições têm prioridade; sem fustes medidos, cai no valor manual informado
+  const altEf = mp.alturaMaxima != null ? mp.alturaMaxima : (c.alturaManual != null ? c.alturaManual : null);
+  const dapEf = mp.dapMedio != null ? mp.dapMedio : (c.dapManual != null ? c.dapManual : null);
+  const votos = [classeAltura(altEf, g), classeDap(dapEf, g)];
   for (const q of CONAMA_QUALI) votos.push(c[q.key] || null);
   votos.push(c.indicadoras === "pioneiras" ? "inicial" : c.indicadoras === "secundarias" ? "ambiguo" : null);
   const cont = (arr, s) => arr.filter((v) => v === s).length;
@@ -600,12 +698,19 @@ function telaConama(parcelaId) {
   const opcoesParam = (key, desc) => ["inicial", "medio", "avancado"].map((est) =>
     `<button class="conama-opt ${c[key] === est ? "sel" : ""}" data-param="${key}" data-est="${est}">
        <b>${ROTULO_ESTAGIO[est]}</b><span>${esc(desc[est])}</span></button>`).join("");
-  // altura/DAP: auto a partir das médias medidas (mostra a classe sugerida)
-  const aAlt = classeAltura(mp.alturaMaxima, g);
-  const aDap = classeDap(mp.dapMedio, g);
-  const autoLinha = (label, valor, classe, d) => `<div class="conama-auto">
-    <div class="conama-auto-top"><b>${label}</b> ${valor} → <span class="badge ${classe && classe !== "ambiguo" ? "ok" : "nok"}">${classe ? (classe === "ambiguo" ? "zona 18–20 (decide pelos outros)" : ROTULO_ESTAGIO[classe]) : "sem dado"}</span></div>
+  // altura/DAP: auto a partir das médias medidas; sem fustes medidos, usa o manual.
+  const autoLinha = (label, valor, classe, d, manual) => `<div class="conama-auto">
+    <div class="conama-auto-top"><b>${label}</b> ${valor}${manual ? ' <span class="badge">manual</span>' : ""} → <span class="badge ${classe && classe !== "ambiguo" ? "ok" : "nok"}">${classe ? (classe === "ambiguo" ? "zona 18–20 (decide pelos outros)" : ROTULO_ESTAGIO[classe]) : "sem dado"}</span></div>
     <small>Inicial: ${d.inicial} · Médio: ${d.medio} · Avançado: ${d.avancado}</small></div>`;
+  function autoBoxHtml() {
+    const m = mediasParcela(p);
+    const altEf = m.alturaMaxima != null ? m.alturaMaxima : (c.alturaManual != null ? c.alturaManual : null);
+    const dapEf = m.dapMedio != null ? m.dapMedio : (c.dapManual != null ? c.dapManual : null);
+    const altMan = m.alturaMaxima == null && c.alturaManual != null;
+    const dapMan = m.dapMedio == null && c.dapManual != null;
+    return autoLinha("Altura do dossel", altEf != null ? fmtNum(altEf, 1) + " m" : "—", classeAltura(altEf, g), lim.altura, altMan)
+      + autoLinha("DAP médio", dapEf != null ? fmtNum(dapEf, 1) + " cm" : "—", classeDap(dapEf, g), lim.dap, dapMan);
+  }
 
   const qualiHtml = CONAMA_QUALI.map((q) =>
     `<div class="conama-param"><div class="conama-label">${q.label}</div>
@@ -619,8 +724,15 @@ function telaConama(parcelaId) {
   app.innerHTML = `${header("Estágio sucessional", () => telaParcela(parcelaId))}
     <main>
       <div class="info">${lim.rotulo} · parcela <b>${esc(p.rotulo || "")}</b></div>
-      ${autoLinha("Altura do dossel", mp.alturaMaxima != null ? fmtNum(mp.alturaMaxima, 1) + " m" : "—", aAlt, lim.altura)}
-      ${autoLinha("DAP médio", mp.dapMedio != null ? fmtNum(mp.dapMedio, 1) + " cm" : "—", aDap, lim.dap)}
+      <div id="conama-auto-box">${autoBoxHtml()}</div>
+      <details class="conama-manual">
+        <summary>Sem fustes medidos? Informar altura/DAP manual</summary>
+        <div class="linha2">
+          <label>Altura do dossel (m)<input id="cm-altura" type="number" step="0.1" inputmode="decimal" value="${c.alturaManual ?? ""}"></label>
+          <label>DAP médio (cm)<input id="cm-dap" type="number" step="0.1" inputmode="decimal" value="${c.dapManual ?? ""}"></label>
+        </div>
+        <small>Usado só quando a parcela não tem CAP/altura medidos (ex.: estágio estimado em campo).</small>
+      </details>
       ${qualiHtml}
       ${indHtml}
       <div class="conama-resultado" id="conama-res"></div>
@@ -646,6 +758,15 @@ function telaConama(parcelaId) {
       render();
     };
   });
+  const setManual = (campo, el) => {
+    const v = parseFloat(el.value);
+    c[campo] = Number.isNaN(v) ? null : v;
+    $("#conama-auto-box").innerHTML = autoBoxHtml();
+    agendarSalvar();
+    render();
+  };
+  $("#cm-altura").oninput = (e) => setManual("alturaManual", e.target);
+  $("#cm-dap").oninput = (e) => setManual("dapManual", e.target);
   render();
 }
 
@@ -670,6 +791,7 @@ function telaParcela(parcelaId) {
         </div>
         <button class="btn-sec largo" id="p-conama">🌳 Estágio sucessional (CONAMA) <span id="p-conama-est"></span></button>
       </div>
+      <div class="erro-estrato-box neutro" id="p-resumo"></div>
       <button class="btn-grande" id="novo-ind">+ Novo indivíduo</button>
       <div class="ordenar"><label>Organizar por <select id="ord-ind">${ordOpts}</select></label>
         <span class="ord-cont">${p.individuos.length} indiv.</span></div>
@@ -709,7 +831,29 @@ function telaParcela(parcelaId) {
     }).join("");
     $$("[data-ind]", box).forEach((el) => { el.onclick = () => telaIndividuo(p.id, el.dataset.ind); });
   }
+  // resumo da parcela: erro amostral do estrato + volume acumulado desta parcela
+  function renderResumo() {
+    const el = $("#p-resumo");
+    if (!el) return;
+    const aHa = areaParcelaHa(inv.config);
+    const volM3 = volumeParcelaM3(p, est);
+    const mha = aHa ? volM3 / aHa : null;
+    const r = resultadosPorEstrato(inv).find((x) => x.estrato.id === p.estratoId);
+    const alvo = inv.config.erroAlvoPct;
+    let erroTxt, cls = "neutro";
+    if (!r || !r.erro) {
+      erroTxt = `erro do estrato: ${r ? r.nParcelas : 0} parcela(s) <small>(precisa de 2+)</small>`;
+    } else {
+      const e = r.erro.erro_rel_pct;
+      const suf = e <= alvo;
+      cls = suf ? (e > alvo * 0.8 ? "amarelo" : "verde") : "vermelho";
+      erroTxt = `erro do estrato: <b>${fmtNum(e, 2)}%</b> ${suf ? "✓" : "✗ acima"} <small>(alvo ${fmtNum(alvo, 0)}%)</small>`;
+    }
+    el.className = `erro-estrato-box ${cls}`;
+    el.innerHTML = `volume acumulado: <b>${fmtNum(volM3, 4)} m³</b>${mha != null ? ` · ${fmtNum(mha, 1)} m³/ha` : ""} <small>(${p.individuos.length} indiv.)</small><br>${erroTxt}`;
+  }
   renderCardsInd();
+  renderResumo();
 }
 
 function marcarGPS(p) {
@@ -778,9 +922,11 @@ function telaIndividuo(parcelaId, individuoId) {
     const mp = mediasParcela(p);
     const mpEl = $("#medias-parcela");
     if (mpEl) {
-      mpEl.innerHTML = mp.nFustes
+      const volAc = volumeParcelaM3(p, est);
+      const medias = mp.nFustes
         ? `Parcela: DAP médio <b>${fmtNum(mp.dapMedio, 1)} cm</b> · maior árvore <b>${fmtNum(mp.alturaMaxima, 1)} m</b> <small>(${mp.nFustes} fuste${mp.nFustes === 1 ? "" : "s"})</small>`
         : "Médias da parcela: aguardando primeiro fuste";
+      mpEl.innerHTML = `${medias}<br>Volume acumulado: <b>${fmtNum(volAc, 4)} m³</b> <small>(${p.individuos.length} indiv.)</small>`;
     }
     // erro amostral do estrato recalculado ao vivo (inclui este indivíduo) —
     // permite flagrar um outlier antes de fechar a parcela.
@@ -953,6 +1099,8 @@ async function telaEspecies(invId) {
         <button class="seg ativo">🌿 Espécies</button>
       </div>
       <button class="btn-grande" id="add-esp">+ Adicionar espécie</button>
+      <input id="busca-esp" class="busca" type="search" placeholder="🔎 Buscar espécie…" autocomplete="off">
+      <div class="info dica-press">Segure uma espécie pra excluir.</div>
       <div class="cards">${cards}</div>
       <button class="btn-sec largo" id="exp-fotos-esp">⬇ Exportar fotos das espécies (ZIP)</button>
     </main>`;
@@ -965,11 +1113,36 @@ async function telaEspecies(invId) {
     await salvarJa();
     telaEspecies(invId);
   };
-  $$("[data-esp]").forEach((el) => { el.onclick = () => telaEspecie(invId, el.dataset.esp); });
+  $$("[data-esp]").forEach((el) => {
+    el.onclick = () => { if (suprimirClique) return; telaEspecie(invId, el.dataset.esp); };
+    // segurar a espécie → excluir (bloqueia se há indivíduos usando o nome)
+    ligarPressLongo(el, async () => {
+      const nome = el.dataset.esp;
+      let usados = 0;
+      for (const p of inv.parcelas) usados += p.individuos.filter((ind) => (ind.especie || "").trim() === nome).length;
+      if (usados) { alert(`"${nome}" está em ${usados} indivíduo(s). Renomeie ou exclua esses indivíduos primeiro.`); return; }
+      if (!confirm(`Excluir a espécie "${nome}" e suas fotos? Não dá pra desfazer.`)) return;
+      inv.especies = (inv.especies || []).filter((s) => (s || "").trim() !== nome);
+      const fts = (await db.fotosDoInventario(invId)).filter((f) => f.tipo === "especie" && f.refKey === nome);
+      for (const f of fts) await db.excluirFoto(f.id);
+      await salvarJa();
+      telaEspecies(invId);
+    });
+  });
+  const buscaEl = $("#busca-esp");
+  buscaEl.oninput = () => {
+    const t = semAcento(buscaEl.value);
+    $$("[data-esp]").forEach((el) => {
+      el.style.display = (!t || semAcento(el.dataset.esp).includes(t)) ? "" : "none";
+    });
+  };
   $("#exp-fotos-esp").onclick = () => exportarZipEspecies(invId);
 }
 
 const CATEGORIAS_FOTO = ["Geral", "Serrapilheira", "Dossel", "Sub-bosque"];
+// Categorias de foto de ESPÉCIE (organização opcional, togglável na tela da espécie).
+const CATEGORIAS_ESP = ["Geral", "Material Vegetativo", "Tronco", "Material Reprodutivo"];
+const espCatAtivo = () => localStorage.getItem("aflora-esp-cat") === "1";
 
 // TELA — detalhe da espécie: renomear + ocorrência + pastas de parcela
 async function telaEspecie(invId, nome) {
@@ -986,15 +1159,26 @@ async function telaEspecie(invId, nome) {
     const n = p.individuos.filter((ind) => (ind.especie || "").trim() === nome).length;
     if (n) ocorre.push(`${rotulo[p.id]} (${n})`);
   }
-  // pastas de fotos por parcela ("" = avulsa, fora de parcela)
-  const porParc = {};
-  for (const f of fotos) { const k = f.parcelaId || ""; (porParc[k] = porParc[k] || []).push(f); }
-  const chaves = Object.keys(porParc).sort();
-  const pastasHtml = chaves.length ? chaves.map((k) =>
-    `<div class="card" data-pasta="${esc(k)}"><div class="card-corpo">
-       <div class="card-nome">📁 ${k ? esc(rotulo[k] || k) : "Sem parcela (avulsa)"}</div>
-       <div class="card-sub">${porParc[k].length} foto(s)</div></div></div>`).join("")
-    : '<p class="vazio">Nenhuma foto. Toque em "Tirar foto" ou use o 📷 ao registrar o indivíduo.</p>';
+  // duas lentes sobre as mesmas fotos: por parcela (padrão) ou por categoria (toggle).
+  const porCat = espCatAtivo();
+  let pastasHtml;
+  if (porCat) {
+    const mapCat = {};
+    for (const f of fotos) { const k = f.categoria || "Geral"; (mapCat[k] = mapCat[k] || []).push(f); }
+    pastasHtml = CATEGORIAS_ESP.map((cat) =>
+      `<div class="card" data-cat="${esc(cat)}"><div class="card-corpo">
+         <div class="card-nome">📁 ${esc(cat)}</div>
+         <div class="card-sub">${(mapCat[cat] || []).length} foto(s)</div></div></div>`).join("");
+  } else {
+    const porParc = {};
+    for (const f of fotos) { const k = f.parcelaId || ""; (porParc[k] = porParc[k] || []).push(f); }
+    const chaves = Object.keys(porParc).sort();
+    pastasHtml = chaves.length ? chaves.map((k) =>
+      `<div class="card" data-pasta="${esc(k)}"><div class="card-corpo">
+         <div class="card-nome">📁 ${k ? esc(rotulo[k] || k) : "Sem parcela (avulsa)"}</div>
+         <div class="card-sub">${porParc[k].length} foto(s)</div></div></div>`).join("")
+      : '<p class="vazio">Nenhuma foto. Toque em "Tirar foto" ou use o 📷 ao registrar o indivíduo.</p>';
+  }
   app.innerHTML = `${header("Espécie", () => telaEspecies(invId))}
     <main class="form">
       <label class="campo">Nome da espécie <small>(editar renomeia no inventário todo)</small>
@@ -1003,10 +1187,18 @@ async function telaEspecie(invId, nome) {
         ? "Ocorre em: <b>" + esc(ocorre.join(", ")) + "</b>"
         : "Espécie avulsa — não registrada em parcelas (ex.: herbácea / fora das parcelas)."}</div>
       <button class="btn-grande" id="esp-foto">📷 Tirar foto avulsa</button>
-      <h3>Fotos por parcela</h3>
+      <div class="sec-fotos-head">
+        <h3>${porCat ? "Fotos por categoria" : "Fotos por parcela"}</h3>
+        <button class="btn-icone-disc" id="toggle-cat" title="${porCat ? "Ver por parcela" : "Ver por categoria"}">${porCat ? "🏷️" : "📁"}</button>
+      </div>
       <div class="cards">${pastasHtml}</div>
     </main>`;
   ligarVoltar(() => telaEspecies(invId));
+  $("#toggle-cat").onclick = () => {
+    localStorage.setItem("aflora-esp-cat", porCat ? "0" : "1");
+    telaEspecie(invId, nomeAtual);
+  };
+  $$("[data-cat]").forEach((el) => { el.onclick = () => telaEspecieFotosCat(invId, nomeAtual, el.dataset.cat); });
   $("#esp-nome").onchange = async (e) => {
     const novo = e.target.value.trim();
     if (!novo || novo === nomeAtual) return;
@@ -1045,6 +1237,27 @@ async function telaEspecieFotos(invId, nome, parcelaKey) {
     if (foto) telaEspecieFotos(invId, nome, parcelaKey);
   };
   ligarDelFoto("#ef-galeria", () => telaEspecieFotos(invId, nome, parcelaKey));
+}
+
+// TELA — fotos de uma espécie numa CATEGORIA (Geral/Material Vegetativo/Tronco/Material Reprodutivo)
+async function telaEspecieFotosCat(invId, nome, categoria) {
+  inv = await db.obterInventario(invId);
+  if (!inv) return telaInventarios();
+  revogarUrls();
+  const fotos = (await db.fotosDoInventario(invId))
+    .filter((f) => f.tipo === "especie" && f.refKey === nome && (f.categoria || "Geral") === categoria);
+  app.innerHTML = `${header(categoria, () => telaEspecie(invId, nome))}
+    <main>
+      <div class="info"><i>${esc(nome)}</i> · ${esc(categoria)}</div>
+      <button class="btn-grande" id="efc-foto">📷 Tirar foto aqui</button>
+      <div id="efc-galeria">${galeriaHTML(fotos)}</div>
+    </main>`;
+  ligarVoltar(() => telaEspecie(invId, nome));
+  $("#efc-foto").onclick = async () => {
+    const foto = await capturarFoto(invId, "especie", nome, { parcelaId: "", categoria });
+    if (foto) { adicionarEspecie(inv, nome); await salvarJa(); telaEspecieFotosCat(invId, nome, categoria); }
+  };
+  ligarDelFoto("#efc-galeria", () => telaEspecieFotosCat(invId, nome, categoria));
 }
 
 // TELA — fotos de uma parcela por categoria (Geral/Serrapilheira/Dossel/Sub-bosque)
@@ -1095,9 +1308,11 @@ async function exportarZipEspecies(invId) {
   for (const f of fotos) {
     const esp = nomeSeguro(f.refKey);
     const sub = f.parcelaId ? nomeSeguro(rotulo[f.parcelaId] || f.parcelaId) : "Sem parcela";
-    const chave = esp + "/" + sub;
+    // categoria vira subpasta só quando definida e diferente de "Geral" (mantém compat.)
+    const cat = (f.categoria && f.categoria !== "Geral") ? "/" + nomeSeguro(f.categoria) : "";
+    const chave = esp + "/" + sub + cat;
     cont[chave] = (cont[chave] || 0) + 1;
-    arquivos.push({ nome: `${esp}/${sub}/${esp}_${cont[chave]}.jpg`, dados: await f.blob.arrayBuffer() });
+    arquivos.push({ nome: `${chave}/${esp}_${cont[chave]}.jpg`, dados: await f.blob.arrayBuffer() });
   }
   baixar(`${nomeSeguro(inv2.nome)}_fotos_especies.zip`, criarZip(arquivos), "application/zip");
 }

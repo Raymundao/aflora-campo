@@ -199,10 +199,46 @@ input:focus, select:focus, textarea:focus { outline: 3px solid var(--verde-claro
 .ac-item i { color: var(--verde-700); font-style: italic; }
 .ac-item:active { background: var(--ok-bg); }
 
+/* ---------- busca / dicas ---------- */
+.busca { margin: var(--e1) 0; }
+.dica-press { font-size: var(--fs-leg); padding: var(--e1) var(--e3); }
+
+/* ---------- cabeçalho de seção com botão discreto (toggle parcela/categoria) ---------- */
+.sec-fotos-head { display: flex; align-items: center; justify-content: space-between; gap: var(--e2); }
+.sec-fotos-head h3 { margin: var(--e3) 0 var(--e1); }
+.btn-icone-disc { background: transparent; border: 1.5px solid var(--borda); color: var(--texto-fraco);
+  min-width: 40px; min-height: 40px; font-size: 18px; border-radius: var(--r-sm); flex: 0 0 auto; }
+.btn-icone-disc:active { background: var(--ok-bg); }
+
+/* ---------- detalhe de pendências (ⓘ na barra de completude) ---------- */
+.compl-det { margin-top: var(--e1); }
+.compl-det summary { font-size: var(--fs-leg); color: var(--verde-700); font-weight: 700; cursor: pointer;
+  list-style: none; padding: 4px 0; }
+.compl-det summary::-webkit-details-marker { display: none; }
+.compl-faltas { margin: var(--e1) 0 0; padding-left: var(--e3); font-size: var(--fs-leg); color: var(--texto-fraco); }
+.compl-faltas li { margin-bottom: 3px; }
+.compl-faltas b { color: var(--texto); }
+
+/* ---------- CONAMA: altura/DAP manual ---------- */
+.conama-manual { background: var(--card); border: 1.5px solid var(--borda); border-radius: var(--r);
+  padding: var(--e2) var(--e3); margin-bottom: var(--e1); }
+.conama-manual summary { font-size: var(--fs-leg); color: var(--verde-700); font-weight: 700; cursor: pointer;
+  list-style: none; padding: 4px 0; }
+.conama-manual summary::-webkit-details-marker { display: none; }
+.conama-manual small { color: var(--texto-fraco); font-size: var(--fs-leg); }
+
+/* ---------- lightbox (foto em tela cheia) ---------- */
+.lightbox { position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,.92);
+  display: flex; align-items: center; justify-content: center; padding: var(--e3); }
+.lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: var(--r-sm); }
+.lightbox-fechar { position: absolute; top: max(12px, env(safe-area-inset-top)); right: 12px;
+  background: rgba(255,255,255,.2); color: #fff; border: 0; width: 44px; height: 44px;
+  border-radius: 50%; font-size: 20px; line-height: 1; }
+
 /* ---------- galeria de fotos ---------- */
 .galeria { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--e1); margin-top: var(--e2); }
 .foto-item { position: relative; aspect-ratio: 1; }
-.foto-item img { width: 100%; height: 100%; object-fit: cover; border-radius: var(--r-sm); border: 1.5px solid var(--borda); }
+.foto-item img { width: 100%; height: 100%; object-fit: cover; border-radius: var(--r-sm); border: 1.5px solid var(--borda); cursor: pointer; }
 .foto-del { position: absolute; top: 4px; right: 4px; background: var(--erro-fg); color: #fff;
   border: 0; width: 28px; height: 28px; border-radius: 50%; font-size: 14px; line-height: 1; }
 .cat-sec, .conama-param { background: var(--card); border: 1.5px solid var(--borda); border-radius: var(--r); padding: var(--e2) var(--e3); margin-bottom: var(--e1); }
