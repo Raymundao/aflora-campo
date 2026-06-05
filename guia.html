@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1B5E20">
+  <title>Guia de estilo — Aflora Campo</title>
+  <link rel="stylesheet" href="./css/novo.css">
+  <style>
+    .gnota { color: var(--texto-fraco); font-size: var(--fs-leg); margin: 0 0 8px; }
+    .swatch { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+    .swatch div { flex: 1; min-width: 80px; padding: 14px 8px; border-radius: 10px; text-align: center; font-size: 12px; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <header class="topo">
+      <span class="logo">🌳</span>
+      <h1>Guia de estilo</h1>
+      <button class="btn-sol" id="sol" aria-label="Modo sol">☀️</button>
+    </header>
+    <main>
+      <p class="gnota">Toque no ☀️ no topo pra ligar/desligar o <b>modo sol</b> (fonte maior + contraste reforçado pra ler na luz forte). É assim que vai ficar o app — me diz se curtiu.</p>
+
+      <h3>Cores de status</h3>
+      <div class="swatch">
+        <div style="background:var(--ok-bg);color:var(--ok-fg)">OK</div>
+        <div style="background:var(--warn-bg);color:var(--warn-fg)">Atenção</div>
+        <div style="background:var(--erro-bg);color:var(--erro-fg)">Erro</div>
+        <div style="background:var(--neutro-bg);color:var(--neutro-fg)">Neutro</div>
+      </div>
+
+      <h3>Botões — 4 tipos</h3>
+      <button class="btn-grande">Primário (ação principal)</button>
+      <div class="acoes-linha">
+        <button class="btn-sec">Secundário</button>
+        <button class="perigo">🗑 Perigo</button>
+        <button class="btn-foto">📷</button>
+      </div>
+      <button class="btn-sec largo">Secundário largo</button>
+
+      <h3>Navegação <small>(abas)</small></h3>
+      <div class="seg-nav">
+        <button class="seg ativo">📋 Parcelas</button>
+        <button class="seg">🌿 Espécies</button>
+      </div>
+
+      <h3>Cartões</h3>
+      <div class="card"><div class="card-corpo">
+        <div class="card-nome">P01 <small>· Mata (FES)</small></div>
+        <div class="card-sub">12 indiv. · 1,74 m³ · 154,5 m³/ha · 📍</div>
+      </div><div class="card-acoes"><button class="btn-foto">📷</button></div></div>
+      <div class="card card-atual"><div class="card-corpo">
+        <div class="card-nome">#26 <i>Siparuna guianensis</i> <span class="badge ok">editando</span></div>
+        <div class="card-sub">1 fuste(s) · 0,0141 m³</div>
+      </div></div>
+
+      <h3>Caixas de informação</h3>
+      <div class="info">Parcela: DAP médio <b>10,2 cm</b> · maior árvore <b>14,0 m</b></div>
+      <div class="erro-estrato-box vermelho"><b>227,2%</b> ✗ acima (2 parcelas · alvo 10%)</div>
+      <div class="aviso-outlier">⚠ <b>Indivíduo atípico</b> — confira o CAP/altura.</div>
+
+      <h3>Barra de erro + completude</h3>
+      <div class="barra"><div class="barra-fill amarelo" style="width:60%"></div><div class="barra-alvo" style="left:66%"></div></div>
+      <div class="estrato-stats">erro <b>8,9%</b> (alvo 10%) · 15 parcelas</div>
+      <div class="compl">
+        <div class="compl-top">Completude: <b>67%</b></div>
+        <div class="barra"><div class="barra-fill verde" style="width:67%"></div></div>
+        <div class="compl-itens"><span class="compl-item ok">✓ Erro</span><span class="compl-item pend">50% Campos</span><span class="compl-item pend">0% Fotos</span></div>
+      </div>
+
+      <h3>Campos de formulário</h3>
+      <div class="form">
+        <label class="campo">Rótulo da parcela<input value="P01"></label>
+        <label class="campo">Espécie
+          <div class="autocomplete">
+            <input placeholder="Digite ou toque em ▾">
+            <button class="ac-cam">📷</button>
+            <button class="ac-toggle">▾</button>
+          </div></label>
+        <div class="linha2">
+          <label>CAP (cm)<input inputmode="decimal" placeholder="40"></label>
+          <label>Altura (m)<input inputmode="decimal" placeholder="8"></label>
+        </div>
+      </div>
+
+      <h3>Chips de seleção <small>(CONAMA)</small></h3>
+      <div class="conama-param">
+        <div class="conama-label">Estratificação</div>
+        <div class="conama-opts">
+          <button class="conama-opt"><b>Inicial</b><span>sem estratificação</span></button>
+          <button class="conama-opt sel"><b>Médio</b><span>dossel + sub-bosque</span></button>
+          <button class="conama-opt"><b>Avançado</b><span>dossel + sub-dossel</span></button>
+        </div>
+      </div>
+      <div class="conama-resultado verde">Estágio sugerido: <b>Avançado</b></div>
+
+      <p class="gnota" style="margin-top:24px">— fim do guia —</p>
+    </main>
+  </div>
+  <script>
+    const b = document.body, k = "aflora-sol";
+    if (localStorage.getItem(k) === "1") b.classList.add("sol");
+    document.getElementById("sol").onclick = () => {
+      b.classList.toggle("sol");
+      localStorage.setItem(k, b.classList.contains("sol") ? "1" : "0");
+    };
+  </script>
+</body>
+</html>
