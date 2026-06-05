@@ -14,7 +14,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v22"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v23"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -212,32 +212,14 @@ async function telaInventario(id) {
   // limpeza única: remove a lista de espécies poluída por digitação parcial da
   // versão antiga (autocomplete agora deriva só dos indivíduos registrados).
   if (inv.config?.especies?.length) { delete inv.config.especies; db.salvarInventario(inv); }
-  const aHa = areaParcelaHa(inv.config);
   const resultados = resultadosPorEstrato(inv);
-  const estPorId = Object.fromEntries(inv.estratos.map((e) => [e.id, e]));
   const fotos = await db.fotosDoInventario(id);
-  const fotosPorParc = {};
-  for (const f of fotos) if (f.tipo === "parcela") fotosPorParc[f.refKey] = (fotosPorParc[f.refKey] || 0) + 1;
   const nEspecies = registroEspecies(inv, fotos.filter((f) => f.tipo === "especie").map((f) => f.refKey)).length;
 
-  const barras = resultados.map((r) => barraErro(r, inv.config.erroAlvoPct)).join("");
-  const parcelasHtml = inv.parcelas.length
-    ? inv.parcelas.map((p) => {
-        const est = estPorId[p.estratoId];
-        const volM3 = p.individuos.reduce((s, ind) =>
-          s + volumeIndividuo(ind.fustes, est?.fitofisionomia).vol_aereo, 0);
-        const mha = aHa ? volM3 / aHa : null;
-        const nf = fotosPorParc[p.id] || 0;
-        return `<div class="card">
-          <div class="card-corpo" data-parc="${p.id}">
-            <div class="card-nome">${esc(p.rotulo || "(sem rótulo)")} <small>· ${esc(est?.nome || "?")}</small></div>
-            <div class="card-sub">${p.individuos.length} indiv. · ${fmtNum(volM3, 4)} m³${mha != null ? " · " + fmtNum(mha, 1) + " m³/ha" : ""}${p.lat != null ? " · 📍" : ""}</div>
-          </div>
-          <div class="card-acoes">
-            <button class="btn-foto" data-fotos-parc="${p.id}" title="Fotos da parcela">📷${nf ? " " + nf : ""}</button>
-          </div></div>`;
-      }).join("")
-    : '<p class="vazio">Nenhuma parcela. Toque em "+ Nova parcela".</p>';
+  // cada estrato vira um card (erro + completude) → toca pra ver as parcelas dele
+  const estratosHtml = resultados.length
+    ? resultados.map((r) => cardEstrato(inv, r, completudeEstrato(inv, r.estrato, r, fotos))).join("")
+    : '<p class="vazio">Nenhum estrato. Toque em ⚙ Config pra adicionar.</p>';
 
   app.innerHTML = `${header(inv.nome, telaInventarios)}
     <main>
@@ -245,25 +227,122 @@ async function telaInventario(id) {
         <button class="seg ativo">📋 Parcelas</button>
         <button class="seg" id="ir-especies">🌿 Espécies${nEspecies ? " (" + nEspecies + ")" : ""}</button>
       </div>
-      <section class="painel-erro">${barras}</section>
-      <div class="acoes-linha">
-        <button class="btn-grande" id="nova-parc">+ Nova parcela</button>
-        <button class="btn-sec" id="cfg">⚙ Config</button>
-      </div>
-      <div class="cards">${parcelasHtml}</div>
+      <div class="acoes-linha"><button class="btn-sec largo" id="cfg">⚙ Config (estratos, área, erro)</button></div>
+      <div class="cards">${estratosHtml}</div>
       <button class="btn-sec largo" id="ir-exportar">📤 Exportar / Compartilhar</button>
     </main>`;
   ligarVoltar(telaInventarios);
+  $("#cfg").onclick = telaConfig;
+  $("#ir-especies").onclick = () => telaEspecies(inv.id);
+  $("#ir-exportar").onclick = () => telaExportar(inv.id);
+  $$("[data-estrato]").forEach((el) => { el.onclick = () => telaParcelasDoEstrato(el.dataset.estrato); });
+}
+
+// Completude do estrato (% pronto) = média de: erro amostral batido · campos das
+// parcelas preenchidos · fotos de parcela nos 4 tipos.
+function completudeEstrato(inv, estrato, resErro, fotos) {
+  const parcelas = inv.parcelas.filter((p) => p.estratoId === estrato.id);
+  const alvo = inv.config.erroAlvoPct;
+  const c1 = (resErro && resErro.erro && resErro.erro.erro_rel_pct <= alvo) ? 1 : 0;
+  let completas = 0;
+  for (const p of parcelas) {
+    const gpsOk = p.lat != null && p.lon != null;
+    const indOk = p.individuos.length >= 1 && p.individuos.every((ind) =>
+      (ind.especie || "").trim() && ind.fustes.length >= 1
+      && ind.fustes.every((f) => f.capCm != null && f.alturaM != null));
+    if (gpsOk && indOk) completas++;
+  }
+  const c2 = parcelas.length ? completas / parcelas.length : 0;
+  let somaFotos = 0;
+  for (const p of parcelas) {
+    const cats = new Set(fotos.filter((f) => f.tipo === "parcela" && f.refKey === p.id).map((f) => f.categoria || "Geral"));
+    somaFotos += CATEGORIAS_FOTO.filter((c) => cats.has(c)).length / CATEGORIAS_FOTO.length;
+  }
+  const c3 = parcelas.length ? somaFotos / parcelas.length : 0;
+  return {
+    pct: Math.round(((c1 + c2 + c3) / 3) * 100),
+    itens: [
+      { label: "Erro amostral", frac: c1 },
+      { label: "Campos", frac: c2 },
+      { label: "Fotos parcela", frac: c3 },
+    ],
+  };
+}
+
+function barraCompletude(comp) {
+  const cls = comp.pct >= 100 ? "verde" : comp.pct >= 60 ? "amarelo" : "vermelho";
+  const itens = comp.itens.map((i) =>
+    `<span class="compl-item ${i.frac >= 1 ? "ok" : "pend"}">${i.frac >= 1 ? "✓" : Math.round(i.frac * 100) + "%"} ${i.label}</span>`).join("");
+  return `<div class="compl">
+    <div class="compl-top">Completude: <b>${comp.pct}%</b></div>
+    <div class="barra"><div class="barra-fill ${cls}" style="width:${comp.pct}%"></div></div>
+    <div class="compl-itens">${itens}</div>
+  </div>`;
+}
+
+// Card de um estrato na tela do inventário: erro + completude, toca pra abrir as parcelas.
+function cardEstrato(inv, r, comp) {
+  const alvo = inv.config.erroAlvoPct;
+  let erro;
+  if (!r.erro) {
+    erro = `<div class="aguardando">${r.nParcelas} parcela(s) — erro a partir de 2</div>`;
+  } else {
+    const e = r.erro.erro_rel_pct;
+    const suf = e <= alvo;
+    const cls = suf ? (e > alvo * 0.8 ? "amarelo" : "verde") : "vermelho";
+    const larg = Math.min(e / (alvo * 1.5), 1) * 100;
+    const posAlvo = (1 / 1.5) * 100;
+    erro = `<div class="barra"><div class="barra-fill ${cls}" style="width:${larg}%"></div><div class="barra-alvo" style="left:${posAlvo}%"></div></div>
+      <div class="estrato-stats">erro <b>${fmtNum(e, 2)}%</b> (alvo ${fmtNum(alvo, 0)}%) · ${r.nParcelas} parc. <small>(precisa ~${Math.ceil(r.erro.n_estrela)})</small></div>`;
+  }
+  return `<div class="card estrato-card" data-estrato="${r.estrato.id}">
+    <div class="estrato-nome">${labelEstrato(r.estrato)} <span class="seta-ir">›</span></div>
+    ${erro}
+    ${barraCompletude(comp)}
+  </div>`;
+}
+
+// TELA — parcelas de UM estrato (entra aqui depois de escolher o fito/estágio)
+async function telaParcelasDoEstrato(estratoId) {
+  if (!inv) return telaInventarios();
+  const estrato = inv.estratos.find((e) => e.id === estratoId);
+  if (!estrato) return telaInventario(inv.id);
+  const aHa = areaParcelaHa(inv.config);
+  const fotos = await db.fotosDoInventario(inv.id);
+  const fotosPorParc = {};
+  for (const f of fotos) if (f.tipo === "parcela") fotosPorParc[f.refKey] = (fotosPorParc[f.refKey] || 0) + 1;
+  const r = resultadosPorEstrato(inv).find((x) => x.estrato.id === estratoId);
+  const comp = completudeEstrato(inv, estrato, r, fotos);
+  const parcelas = inv.parcelas.filter((p) => p.estratoId === estratoId);
+  const parcelasHtml = parcelas.length
+    ? parcelas.map((p) => {
+        const volM3 = p.individuos.reduce((s, ind) => s + volumeIndividuo(ind.fustes, estrato.fitofisionomia).vol_aereo, 0);
+        const mha = aHa ? volM3 / aHa : null;
+        const nf = fotosPorParc[p.id] || 0;
+        return `<div class="card">
+          <div class="card-corpo" data-parc="${p.id}">
+            <div class="card-nome">${esc(p.rotulo || "(sem rótulo)")}</div>
+            <div class="card-sub">${p.individuos.length} indiv. · ${fmtNum(volM3, 4)} m³${mha != null ? " · " + fmtNum(mha, 1) + " m³/ha" : ""}${p.lat != null ? " · 📍" : ""}</div>
+          </div>
+          <div class="card-acoes"><button class="btn-foto" data-fotos-parc="${p.id}" title="Fotos da parcela">📷${nf ? " " + nf : ""}</button></div></div>`;
+      }).join("")
+    : '<p class="vazio">Nenhuma parcela neste estrato. Toque em "+ Nova parcela".</p>';
+
+  app.innerHTML = `${header(EQUACOES_VOLUME[estrato.fitofisionomia]?.rotulo || "Estrato", () => telaInventario(inv.id))}
+    <main>
+      <div class="info">${labelEstrato(estrato)}</div>
+      <section class="painel-erro">${barraErro(r, inv.config.erroAlvoPct)}</section>
+      ${barraCompletude(comp)}
+      <button class="btn-grande" id="nova-parc">+ Nova parcela</button>
+      <div class="cards">${parcelasHtml}</div>
+    </main>`;
+  ligarVoltar(() => telaInventario(inv.id));
   $("#nova-parc").onclick = async () => {
-    const est = inv.estratos[0];
-    const p = novaParcela(est.id, "P" + String(inv.parcelas.length + 1).padStart(2, "0"));
+    const p = novaParcela(estratoId, "P" + String(inv.parcelas.length + 1).padStart(2, "0"));
     inv.parcelas.push(p);
     await salvarJa();
     telaParcela(p.id);
   };
-  $("#cfg").onclick = telaConfig;
-  $("#ir-especies").onclick = () => telaEspecies(inv.id);
-  $("#ir-exportar").onclick = () => telaExportar(inv.id);
   $$("[data-fotos-parc]").forEach((el) => { el.onclick = () => telaFotosParcela(el.dataset.fotosParc); });
   $$("[data-parc]").forEach((el) => { el.onclick = () => telaParcela(el.dataset.parc); });
 }
@@ -452,7 +531,7 @@ function telaParcela(parcelaId) {
   const ordOpts = modos.map(([v, t]) =>
     `<option value="${v}" ${v === ordAtual ? "selected" : ""}>${t}</option>`).join("");
 
-  app.innerHTML = `${header("Parcela " + (p.rotulo || ""), () => telaInventario(inv.id))}
+  app.innerHTML = `${header("Parcela " + (p.rotulo || ""), () => telaParcelasDoEstrato(p.estratoId))}
     <main>
       <section class="painel-erro">${barraErro(resEstrato, inv.config.erroAlvoPct)}</section>
       <div class="form">
@@ -470,7 +549,7 @@ function telaParcela(parcelaId) {
         <span class="ord-cont">${p.individuos.length} indiv.</span></div>
       <div class="cards" id="cards-ind"></div>
     </main>`;
-  ligarVoltar(() => telaInventario(inv.id));
+  ligarVoltar(() => telaParcelasDoEstrato(p.estratoId));
   $("#p-rotulo").oninput = (e) => { p.rotulo = e.target.value; agendarSalvar(); };
   $("#p-estrato").onchange = (e) => { p.estratoId = e.target.value; agendarSalvar(); renderCardsInd(); };
   $("#p-gps").onclick = () => marcarGPS(p);
@@ -863,12 +942,12 @@ async function telaFotosParcela(parcelaId) {
       ${fc.length ? galeriaHTML(fc) : '<p class="vazio-min">— sem fotos</p>'}
     </div>`;
   }).join("");
-  app.innerHTML = `${header("Fotos · " + (p.rotulo || "parcela"), () => telaInventario(inv.id))}
+  app.innerHTML = `${header("Fotos · " + (p.rotulo || "parcela"), () => telaParcelasDoEstrato(p.estratoId))}
     <main>
       <div class="info">Escolha o tipo e toque em 📷. Nome, coordenadas e data são carimbados <b>só na exportação</b>.</div>
       ${secoes}
     </main>`;
-  ligarVoltar(() => telaInventario(inv.id));
+  ligarVoltar(() => telaParcelasDoEstrato(p.estratoId));
   $$("[data-cat]").forEach((el) => {
     el.onclick = async () => {
       const foto = await capturarFoto(inv.id, "parcela", parcelaId, { ...ultimaCoord, categoria: el.dataset.cat });
