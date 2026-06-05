@@ -14,7 +14,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v21"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v22"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -123,7 +123,7 @@ async function telaInventarios() {
   $("#novo-inv").onclick = async () => {
     inv = novoInventario();
     await db.salvarInventario(inv);
-    telaInventario(inv.id);
+    telaConfig(); // abre a Config primeiro: nome + estratos (fitofisionomia/estágio)
   };
   // Importar JSON exportado (backup/restauração). Gera novo id pra não sobrescrever.
   $("#importar").onclick = () => $("#file-import").click();
@@ -175,10 +175,16 @@ async function telaInventarios() {
 // ============================================================
 // TELA 2 — inventário (barra de erro + parcelas)
 // ============================================================
+// Rótulo do estrato com fitofisionomia + estágio bem explícitos.
+function labelEstrato(est) {
+  const fito = EQUACOES_VOLUME[est.fitofisionomia]?.rotulo || est.fitofisionomia || "—";
+  return `<b>${esc(fito)}</b>${est.estagio ? ` <small>· estágio ${esc(est.estagio)}</small>` : " <small>· sem estágio</small>"}`;
+}
+
 function barraErro(r, alvo) {
   if (!r.erro) {
     return `<div class="estrato-card">
-      <div class="estrato-nome">${esc(r.estrato.nome)}</div>
+      <div class="estrato-nome">${labelEstrato(r.estrato)}</div>
       <div class="aguardando">${r.nParcelas} parcela(s) — precisa de 2+ pra calcular o erro</div>
     </div>`;
   }
@@ -189,13 +195,13 @@ function barraErro(r, alvo) {
   const nEst = Math.ceil(r.erro.n_estrela);
   const posAlvo = (1 / 1.5) * 100;
   return `<div class="estrato-card">
-    <div class="estrato-nome">${esc(r.estrato.nome)}
+    <div class="estrato-nome">${labelEstrato(r.estrato)}
       <span class="badge ${suf ? "ok" : "nok"}">${suf ? "✓ suficiente" : "✗ acima de " + alvo + "%"}</span>
     </div>
     <div class="barra"><div class="barra-fill ${cls}" style="width:${larg}%"></div>
       <div class="barra-alvo" style="left:${posAlvo}%"></div></div>
     <div class="estrato-stats">erro <b>${fmtNum(e, 2)}%</b> (alvo ${fmtNum(alvo, 0)}%) ·
-      ${r.nParcelas} parcelas <small>(n* ${Number.isFinite(nEst) ? nEst : "—"})</small> ·
+      ${r.nParcelas} parcelas <small>(precisa ~${Number.isFinite(nEst) ? nEst : "—"})</small> ·
       ${r.erro.vol_total_estimado != null ? fmtNum(r.erro.vol_total_estimado, 1) + " m³" : "defina a área do estrato"}</div>
   </div>`;
 }
@@ -350,6 +356,7 @@ function telaConfig() {
         <input id="cfg-nome" value="${esc(inv.nome)}"></label>
 
       <h3>Estratos</h3>
+      <div class="info">Cada estrato = uma <b>fitofisionomia + estágio</b>. Adicione quantos precisar (ex.: Mata FES Inicial, Mata FES Médio, Cerradão…). Cada parcela é vinculada a um estrato.</div>
       <div id="estratos">${estratosHtml}</div>
       <button class="btn-sec" id="add-est">+ Adicionar estrato</button>
 
