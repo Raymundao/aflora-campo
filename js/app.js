@@ -24,7 +24,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v48"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v49"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -1881,6 +1881,27 @@ async function telaCenso(estratoId, modo = "censo") {
       },
     });
   }
+  // pontos de REFERÊNCIA (KML/KMZ importado) também em CANVAS — desenha a forma
+  // (círculo/quadrado/losango/triângulo) no canvas; aguenta milhares importados.
+  if (!telaCenso._RefPonto) {
+    telaCenso._RefPonto = L.CircleMarker.extend({
+      _updatePath() {
+        const ctx = this._renderer && this._renderer._ctx;
+        if (!ctx || !this._point) return;
+        const x = this._point.x, y = this._point.y;
+        const s = this.options.tam || 12, r = s / 2, forma = this.options.forma, cor = this.options.color;
+        ctx.save();
+        ctx.fillStyle = cor; ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
+        ctx.beginPath();
+        if (forma === "quadrado") { ctx.rect(x - r, y - r, s, s); }
+        else if (forma === "losango") { ctx.moveTo(x, y - r); ctx.lineTo(x + r, y); ctx.lineTo(x, y + r); ctx.lineTo(x - r, y); ctx.closePath(); }
+        else if (forma === "triângulo") { ctx.moveTo(x, y - r); ctx.lineTo(x + r, y + r); ctx.lineTo(x - r, y + r); ctx.closePath(); }
+        else { ctx.arc(x, y, r, 0, 2 * Math.PI); }
+        ctx.fill(); ctx.stroke();
+        ctx.restore();
+      },
+    });
+  }
   let centro = [-19.65, -43.9];
   // centro inicial: último ponto do censo, ou 1º vértice de uma fito/referência
   const comCoord = (est?.pontos || []).filter((p) => p.lat != null);
@@ -2327,6 +2348,7 @@ async function telaCenso(estratoId, modo = "censo") {
   function renderReferencias() {
     if (renderReferencias._l) renderReferencias._l.remove();
     const g = L.layerGroup();
+    const RefP = telaCenso._RefPonto;
     for (const r of inv.geoRefs) {
       const borda = r.corBorda || "#00BCD4";
       let lay;
@@ -2335,12 +2357,15 @@ async function telaCenso(estratoId, modo = "censo") {
         const op = r.opacidade ?? 0;
         // fill:true sempre (mesmo com opacidade 0) pra a área toda pegar o clique
         lay = L.polygon(r.coords, { color: borda, weight: r.peso || 2, dashArray: dash, fill: true, fillColor: r.cor || "#00BCD4", fillOpacity: op });
+        if (r.nome) lay.bindTooltip(r.nome);
       } else if (r.tipo === "linha") {
         lay = L.polyline(r.coords, { color: borda, weight: r.peso || 2, dashArray: dash });
+        if (r.nome) lay.bindTooltip(r.nome);
       } else {
-        lay = L.marker(r.coords[0], { icon: iconeRefPonto(r.forma, r.tamanho, borda) });
+        // ponto importado → CANVAS (sem DOM por ponto; aguenta milhares importados)
+        const tam = r.tamanho || 12;
+        lay = new RefP(r.coords[0], { renderer: rendererPontos, radius: tam / 2, color: borda, weight: 0, fillOpacity: 1, tam, forma: r.forma });
       }
-      if (r.nome) lay.bindTooltip(r.nome);
       lay.on("click", () => abrirFormReferencia(r));
       lay.addTo(g);
     }
