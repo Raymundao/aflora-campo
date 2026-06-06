@@ -18,12 +18,13 @@ import {
   exportarJSON, exportarCSV, exportarXLSX, prepararXLSX, baixar,
   temHerbaceo, exportarHerbaceoXLSX, exportarHerbaceoCSV,
   temCenso, exportarCensoKMZ, exportarCensoXLSX,
+  inventarioParaJSON, blobXLSXInventario, blobXLSXHerbaceo, blobXLSXCenso, kmlCensoStr, slugNome,
 } from "./export.js";
 import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v42"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v43"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -126,8 +127,8 @@ async function telaInventarios() {
         <div class="card-sub">${nParc} parcela(s) · ${(i.estratos || []).length} estrato(s) · ${esc(data)}</div>
       </div>
       <div class="card-acoes">
-        <button data-export-json="${i.id}" title="Exportar JSON">JSON</button>
-        <button data-export-csv="${i.id}" title="Exportar CSV">CSV</button>
+        <button data-backup="${i.id}" title="Backup completo do projeto (ZIP com dados + planilhas + KML + fotos)">💾 Tudo</button>
+        <button data-export-json="${i.id}" title="Exportar JSON (só os dados)">JSON</button>
         <button data-excluir="${i.id}" class="perigo" title="Excluir">🗑</button>
       </div>
     </div>`;
@@ -180,8 +181,13 @@ async function telaInventarios() {
   $$("[data-export-json]").forEach((el) => {
     el.onclick = async () => exportarJSON(await db.obterInventario(el.dataset.exportJson));
   });
-  $$("[data-export-csv]").forEach((el) => {
-    el.onclick = async () => exportarCSV(await db.obterInventario(el.dataset.exportCsv));
+  $$("[data-backup]").forEach((el) => {
+    el.onclick = async () => {
+      const orig = el.textContent; el.textContent = "⏳ montando…"; el.disabled = true;
+      try { await exportarProjetoCompleto(el.dataset.backup); }
+      catch (e) { alert("Erro no backup: " + (e?.message || e)); }
+      el.textContent = orig; el.disabled = false;
+    };
   });
   // Escape hatch: limpa service worker + caches e recarrega do zero (resolve app
   // preso numa versão antiga). Os dados ficam (IndexedDB não é tocado).
@@ -1605,6 +1611,46 @@ async function exportarZipParcelas(invId) {
   baixar(`${nomeSeguro(inv2.nome)}_fotos_parcelas.zip`, criarZip(arquivos), "application/zip");
 }
 
+// BACKUP COMPLETO — 1 ZIP com tudo do projeto: dados (JSON reimportável),
+// planilhas (XLSX), KML do censo e TODAS as fotos (estruturadas).
+async function exportarProjetoCompleto(invId, onProgress) {
+  const inv = await db.obterInventario(invId);
+  if (!inv) return;
+  const fotos = await db.fotosDoInventario(invId);
+  const arquivos = [];
+  const slug = slugNome(inv.nome);
+  arquivos.push({ nome: "inventario.json", dados: inventarioParaJSON(inv) });
+  arquivos.push({ nome: "planilhas/dados.xlsx", dados: await blobXLSXInventario(inv).arrayBuffer() });
+  if (temHerbaceo(inv)) arquivos.push({ nome: "planilhas/herbaceo.xlsx", dados: await blobXLSXHerbaceo(inv).arrayBuffer() });
+  if (temCenso(inv)) {
+    arquivos.push({ nome: "planilhas/censo.xlsx", dados: await blobXLSXCenso(inv).arrayBuffer() });
+    arquivos.push({ nome: "censo.kml", dados: kmlCensoStr(inv) });
+  }
+  const rotulo = {};
+  for (const p of inv.parcelas) rotulo[p.id] = p.rotulo || p.id;
+  const contE = {}, contP = {};
+  let i = 0;
+  for (const f of fotos) {
+    const dados = await f.blob.arrayBuffer();
+    if (f.tipo === "especie") {
+      const esp = nomeSeguro(f.refKey);
+      const sub = f.parcelaId ? nomeSeguro(rotulo[f.parcelaId] || f.parcelaId) : "Sem parcela";
+      const cat = (f.categoria && f.categoria !== "Geral") ? "/" + nomeSeguro(f.categoria) : "";
+      const chave = "fotos/especies/" + esp + "/" + sub + cat;
+      contE[chave] = (contE[chave] || 0) + 1;
+      arquivos.push({ nome: `${chave}/${esp}_${contE[chave]}.jpg`, dados });
+    } else if (f.tipo === "parcela") {
+      const rot = rotulo[f.refKey] || f.refKey;
+      const cat = f.categoria || "Geral";
+      const chave = "fotos/parcelas/" + nomeSeguro(cat) + "/" + nomeSeguro(rot);
+      contP[chave] = (contP[chave] || 0) + 1;
+      arquivos.push({ nome: `${chave}/${nomeSeguro(rot)}_${contP[chave]}.jpg`, dados });
+    }
+    if (onProgress && (++i % 5 === 0)) onProgress(i, fotos.length);
+  }
+  baixar(`${slug}_projeto.zip`, criarZip(arquivos), "application/zip");
+}
+
 // ============================================================
 // CENSO — mapa estilo AlpineQuest (Leaflet): posição + mira central +
 // distância/rumo ao vivo, criar pontos georreferenciados, baixar área offline.
@@ -1678,6 +1724,7 @@ async function telaCenso(estratoId) {
       <div class="bussola" id="bussola" hidden><div class="bussola-rosa" id="bussola-rosa"><span class="bussola-n">N</span></div><span class="bussola-deg" id="bussola-deg">—</span></div>
       <div class="trk-banner" id="trk-banner" hidden></div>
       <div class="censo-fabs">
+        <button class="censo-fab" id="censo-camadas" title="Camadas (editar pontos/polígonos/trilhas)">🗂️</button>
         <button class="censo-fab" id="censo-lista" title="Lista de pontos">📋</button>
         <button class="censo-fab" id="censo-bussola" title="Bússola">🧭</button>
         <button class="censo-fab" id="censo-trilha" title="Gravar trilha">🛤️</button>
@@ -2115,7 +2162,8 @@ async function telaCenso(estratoId) {
       let lay;
       if (r.tipo === "poligono") {
         const op = r.opacidade ?? 0;
-        lay = L.polygon(r.coords, { color: borda, weight: 2, dashArray: "6,4", fill: op > 0, fillColor: r.cor || "#00BCD4", fillOpacity: op });
+        // fill:true sempre (mesmo com opacidade 0) pra a área toda pegar o clique
+        lay = L.polygon(r.coords, { color: borda, weight: 2, dashArray: "6,4", fill: true, fillColor: r.cor || "#00BCD4", fillOpacity: op });
       } else if (r.tipo === "linha") {
         lay = L.polyline(r.coords, { color: borda, weight: 2, dashArray: "6,4" });
       } else {
@@ -2172,6 +2220,43 @@ async function telaCenso(estratoId) {
     } catch (err) { alert("Erro ao ler KML: " + (err?.message || err)); }
     e.target.value = "";
   };
+
+  // ----- camadas: lista tudo (pontos, polígonos, trilhas, referências) pra editar -----
+  function abrirFormTrilha(t) {
+    const painel = $("#censo-painel"); mostrarAdd(false);
+    painel.innerHTML = `<div class="censo-form">
+      <div class="censo-form-top"><b>Trilha</b><span class="censo-form-coord">${t.pontos.length} pontos · ${fmtNum(comprimentoTrilha(t.pontos), 0)} m</span>
+        <button class="btn-foto" id="trk-fechar">✕</button></div>
+      <label class="campo">Nome<input id="trk-nome" value="${esc(t.nome || "")}"></label>
+      <div class="acoes-linha"><button class="btn-grande destaque" id="trk-ok">✓ Salvar</button><button class="perigo" id="trk-del">🗑</button></div></div>`;
+    const fechar = () => { painel.innerHTML = ""; mostrarAdd(true); };
+    $("#trk-fechar").onclick = fechar;
+    $("#trk-nome").oninput = (e) => { t.nome = e.target.value; };
+    $("#trk-ok").onclick = async () => { await salvarJa(); fechar(); };
+    $("#trk-del").onclick = async () => { if (!confirm(`Excluir a trilha "${t.nome || ""}"?`)) return; est.trilhas = est.trilhas.filter((x) => x !== t); await salvarJa(); fechar(); renderTrilhas(); };
+  }
+  function abrirCamadas() {
+    const painel = $("#censo-painel"); mostrarAdd(false);
+    const swatch = (cor) => `<span class="cam-cor" style="background:${esc(cor)}"></span>`;
+    const secao = (titulo, html) => html ? `<h3>${titulo}</h3><div class="cards">${html}</div>` : "";
+    const pols = est.poligonos.map((p) => `<div class="card" data-cam-pol="${p.id}"><div class="card-corpo"><div class="card-nome">▱ ${esc(p.nome || "polígono")}</div><div class="card-sub">${fmtNum(p.areaM2 / 10000, 4)} ha · desenhado</div></div><div class="card-acoes">${swatch(p.cor || "#43A047")}</div></div>`).join("");
+    const trks = est.trilhas.map((t, i) => `<div class="card" data-cam-trk="${i}"><div class="card-corpo"><div class="card-nome">〰 ${esc(t.nome || "trilha")}</div><div class="card-sub">${t.pontos.length} pts · gravada</div></div></div>`).join("");
+    const refs = est.referencias.map((r, i) => `<div class="card" data-cam-ref="${i}"><div class="card-corpo"><div class="card-nome">${r.tipo === "poligono" ? "▱" : r.tipo === "linha" ? "〰" : "•"} ${esc(r.nome || r.tipo)}</div><div class="card-sub">importado · ${esc(r.fonte || "KML")}</div></div><div class="card-acoes">${swatch(r.corBorda || "#00BCD4")}</div></div>`).join("");
+    painel.innerHTML = `<div class="censo-form">
+      <div class="censo-form-top"><b>Camadas</b><span style="flex:1"></span><button class="btn-foto" id="cam-fechar">✕</button></div>
+      <div class="cards"><div class="card" id="cam-pontos"><div class="card-corpo"><div class="card-nome">📍 Meus pontos (${est.pontos.length})</div><div class="card-sub">toque pra listar / ordenar / editar</div></div></div></div>
+      ${secao("Polígonos desenhados", pols)}
+      ${secao("Trilhas gravadas", trks)}
+      ${secao("Referências importadas (KML)", refs)}
+      ${(!est.poligonos.length && !est.trilhas.length && !est.referencias.length) ? '<p class="vazio">Só os pontos por enquanto. Desenhe polígonos, grave trilhas ou importe um KML.</p>' : ""}
+    </div>`;
+    $("#cam-fechar").onclick = () => { painel.innerHTML = ""; mostrarAdd(true); };
+    $("#cam-pontos").onclick = abrirLista;
+    painel.querySelectorAll("[data-cam-pol]").forEach((el) => { el.onclick = () => { const p = est.poligonos.find((x) => x.id === el.dataset.camPol); if (p) abrirFormPoligono(p); }; });
+    painel.querySelectorAll("[data-cam-trk]").forEach((el) => { el.onclick = () => { const t = est.trilhas[+el.dataset.camTrk]; if (t) abrirFormTrilha(t); }; });
+    painel.querySelectorAll("[data-cam-ref]").forEach((el) => { el.onclick = () => { const r = est.referencias[+el.dataset.camRef]; if (r) abrirFormReferencia(r); }; });
+  }
+  $("#censo-camadas").onclick = abrirCamadas;
 
   // form do ponto: sobe num painel (sheet) sobre o rodapé do mapa — não sai da tela
   function abrirFormPonto(pt, ehNovo) {

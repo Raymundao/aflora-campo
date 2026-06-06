@@ -245,6 +245,13 @@ export function exportarHerbaceoXLSX(inv) { baixar(`${slug(inv.nome)}_herbaceo.x
 export function exportarHerbaceoCSV(inv) { baixar(`${slug(inv.nome)}_herbaceo.csv`, inventarioHerbaceoParaCSV(inv), MIME.csv); }
 
 export function exportarCensoXLSX(inv) { baixar(`${slug(inv.nome)}_censo.xlsx`, gerarXlsx(inventarioCensoParaMatriz(inv), "Censo"), MIME.xlsx); }
+
+// blobs/strings p/ montar o backup completo do projeto (1 ZIP com tudo)
+export function blobXLSXInventario(inv) { return gerarXlsx(inventarioParaMatriz(inv), "Inventario"); }
+export function blobXLSXHerbaceo(inv) { return gerarXlsx(inventarioHerbaceoParaMatriz(inv), "Herbaceo"); }
+export function blobXLSXCenso(inv) { return gerarXlsx(inventarioCensoParaMatriz(inv), "Censo"); }
+export function kmlCensoStr(inv) { return kmlCenso(inv); }
+export const slugNome = slug;
 export function exportarCensoKMZ(inv) {
   const zip = criarZip([{ nome: "doc.kml", dados: kmlCenso(inv) }]);
   baixar(`${slug(inv.nome)}_censo.kmz`, zip, "application/vnd.google-earth.kmz");
