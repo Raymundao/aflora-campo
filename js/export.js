@@ -147,7 +147,8 @@ export function inventarioCensoParaMatriz(inv) {
   return linhas;
 }
 
-// KMZ = zip com doc.kml; 1 Placemark por ponto. Nome no padrão AlpineQuest do Diego.
+// KMZ = zip com doc.kml; Placemarks dos pontos (nome no padrão AlpineQuest do
+// Diego) + LineStrings das trilhas gravadas + Polygons desenhados.
 function kmlCenso(inv) {
   const escX = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
   const marks = pontosCenso(inv).filter(({ pt }) => pt.lat != null && pt.lon != null).map(({ est, pt }) => {
@@ -158,8 +159,23 @@ function kmlCenso(inv) {
     const coord = `${pt.lon},${pt.lat}${pt.alt != null ? "," + pt.alt : ""}`;
     return `<Placemark><name>${escX(nome || "ponto")}</name><description>${escX(desc)}</description><Point><coordinates>${coord}</coordinates></Point></Placemark>`;
   }).join("");
+  // trilhas e polígonos (de qualquer estrato censo)
+  let linhas = "", poligonos = "";
+  for (const est of inv.estratos) {
+    if (est.metodo !== "censo") continue;
+    for (const t of (est.trilhas || [])) {
+      if (!t.pontos || t.pontos.length < 2) continue;
+      const cs = t.pontos.map(([la, lo]) => `${lo},${la}`).join(" ");
+      linhas += `<Placemark><name>${escX(t.nome || "trilha")}</name><Style><LineStyle><color>ff00aaff</color><width>3</width></LineStyle></Style><LineString><tessellate>1</tessellate><coordinates>${cs}</coordinates></LineString></Placemark>`;
+    }
+    for (const pol of (est.poligonos || [])) {
+      if (!pol.coords || pol.coords.length < 3) continue;
+      const anel = pol.coords.concat([pol.coords[0]]).map(([la, lo]) => `${lo},${la}`).join(" ");
+      poligonos += `<Placemark><name>${escX(pol.nome || "polígono")}</name><Style><LineStyle><color>ff2e7d32</color><width>2</width></LineStyle><PolyStyle><color>4d43a047</color></PolyStyle></Style><Polygon><outerBoundaryIs><LinearRing><tessellate>1</tessellate><coordinates>${anel}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>`;
+    }
+  }
   return `<?xml version="1.0" encoding="UTF-8"?>
-<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${escX(inv.nome)} — censo</name>${marks}</Document></kml>`;
+<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${escX(inv.nome)} — censo</name>${marks}${linhas}${poligonos}</Document></kml>`;
 }
 
 const MIME = {

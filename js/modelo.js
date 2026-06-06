@@ -133,6 +133,26 @@ export function resultadosCenso(inv, estratoId) {
   return { nPontos: pontos.length, comCoord, volAereo, riqueza: especies.size };
 }
 
+// trilha gravada (gravador) e polígono desenhado (por pontos ou à mão livre).
+// Vivem em est.trilhas / est.poligonos (qualquer estrato, mas usados no censo).
+export function novaTrilha(nome = "") { return { id: novoId("trk"), nome, pontos: [], criadoEm: null }; }
+export function novoPoligono(tipo = "pontos", nome = "") { return { id: novoId("pol"), nome, tipo, coords: [], areaM2: 0 }; }
+
+// Área (m²) de um anel [[lat,lon],...] pela fórmula esférica. Bom o suficiente
+// pra hectares de campo. Fecha o anel automaticamente.
+export function areaAnelM2(coords) {
+  if (!coords || coords.length < 3) return 0;
+  const R = 6378137, toR = Math.PI / 180;
+  let soma = 0;
+  const n = coords.length;
+  for (let i = 0; i < n; i++) {
+    const [lat1, lon1] = coords[i];
+    const [lat2, lon2] = coords[(i + 1) % n];
+    soma += (lon2 - lon1) * toR * (2 + Math.sin(lat1 * toR) + Math.sin(lat2 * toR));
+  }
+  return Math.abs((soma * R * R) / 2);
+}
+
 // ---------- estrato herbáceo (Braun-Blanquet / CONAMA 423) ----------
 export const BB_CLASSES = ["r", "+", "1", "2", "3", "4", "5"];
 // ponto-médio de cobertura (%) de cada classe BB (Mueller-Dombois & Ellenberg)

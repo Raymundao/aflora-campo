@@ -11,6 +11,7 @@ import {
   resultadosHerbaceo, taxonsDoEstrato,
   habitoEspecie, setHabitoEspecie,
   novoPontoCenso, resultadosCenso,
+  novaTrilha, novoPoligono, areaAnelM2,
 } from "./modelo.js";
 import { volumeIndividuo, EQUACOES_VOLUME } from "./calculos.js";
 import {
@@ -22,7 +23,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v37"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v38"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -1620,10 +1621,15 @@ const CAMADAS_SAT = [
   { nome: "Google Híbrido (nomes)", url: TILE_GHIB, maxNativeZoom: 20 },
   { nome: "Esri (reserva)", url: TILE_ESRI, maxNativeZoom: 19 },
 ];
-let _mapa = null, _watchId = null;
+let _mapa = null, _watchId = null, _orientHandler = null;
 
 function destruirMapa() {
   if (_watchId != null && navigator.geolocation) { navigator.geolocation.clearWatch(_watchId); _watchId = null; }
+  if (_orientHandler) {
+    window.removeEventListener("deviceorientationabsolute", _orientHandler);
+    window.removeEventListener("deviceorientation", _orientHandler);
+    _orientHandler = null;
+  }
   if (_mapa) { try { _mapa.remove(); } catch (e) { /* */ } _mapa = null; }
 }
 // distância (m) e rumo (graus) entre dois {lat,lng} — Haversine
@@ -1669,11 +1675,17 @@ async function telaCenso(estratoId) {
       <div class="censo-dot" id="censo-dot"></div>
       <div class="censo-label" id="censo-label" hidden></div>
       <button class="censo-fab censo-voltar" id="censo-voltar" aria-label="Voltar">‹</button>
+      <div class="bussola" id="bussola" hidden><div class="bussola-rosa" id="bussola-rosa"><span class="bussola-n">N</span></div><span class="bussola-deg" id="bussola-deg">—</span></div>
+      <div class="trk-banner" id="trk-banner" hidden></div>
       <div class="censo-fabs">
         <button class="censo-fab" id="censo-centrar" title="Centralizar em mim">🎯</button>
+        <button class="censo-fab" id="censo-bussola" title="Bússola">🧭</button>
+        <button class="censo-fab" id="censo-trilha" title="Gravar trilha">🛤️</button>
+        <button class="censo-fab" id="censo-desenho" title="Desenhar polígono">✏️</button>
         <button class="censo-fab" id="censo-baixar" title="Baixar área offline">⬇</button>
       </div>
       <button class="btn-grande destaque censo-add-fixo" id="censo-add">+ Ponto</button>
+      <div class="censo-barra" id="censo-barra" hidden></div>
       <div class="censo-sheet" id="censo-painel"></div>
     </div>`;
 
@@ -1733,6 +1745,18 @@ async function telaCenso(estratoId) {
     }
   }
 
+  // estado do gravador de trilha (declarado aqui pra o watch enxergar)
+  let gravando = false, trilhaPts = [], trilhaLinha = null;
+  function comprimentoTrilha(pts) {
+    let s = 0;
+    for (let i = 1; i < pts.length; i++) s += distanciaM({ lat: pts[i - 1][0], lng: pts[i - 1][1] }, { lat: pts[i][0], lng: pts[i][1] });
+    return s;
+  }
+  function atualizarTrkBanner() {
+    const b = $("#trk-banner");
+    if (b) b.innerHTML = `⏺ gravando · <b>${fmtNum(comprimentoTrilha(trilhaPts), 0)} m</b> · ${trilhaPts.length} pts`;
+  }
+
   if (navigator.geolocation) {
     _watchId = navigator.geolocation.watchPosition((pos) => {
       userLatLng = { lat: pos.coords.latitude, lng: pos.coords.longitude };
@@ -1745,6 +1769,16 @@ async function telaCenso(estratoId) {
         rastro.push([userLatLng.lat, userLatLng.lng]);
         if (rastro.length > RASTRO_MAX) rastro.shift();
         desenharRastro();
+      }
+      // gravando trilha → acumula posições (a cada >2 m)
+      if (gravando) {
+        const lp = trilhaPts[trilhaPts.length - 1];
+        if (!lp || distanciaM({ lat: lp[0], lng: lp[1] }, userLatLng) > 2) {
+          trilhaPts.push([userLatLng.lat, userLatLng.lng]);
+          if (!trilhaLinha) trilhaLinha = L.polyline(trilhaPts, { color: "#E53935", weight: 4, opacity: 0.9 }).addTo(map);
+          else trilhaLinha.setLatLngs(trilhaPts);
+          atualizarTrkBanner();
+        }
       }
       atualizarLeitura();
     }, () => {}, { enableHighAccuracy: true, maximumAge: 2000, timeout: 15000 });
@@ -1775,6 +1809,165 @@ async function telaCenso(estratoId) {
   $("#censo-baixar").onclick = () => baixarAreaCenso();
   // some/mostra o botão "+ Ponto" conforme o painel (sheet) abre/fecha
   const mostrarAdd = (v) => { const b = $("#censo-add"); if (b) b.style.display = v ? "" : "none"; };
+
+  est.trilhas = est.trilhas || [];
+  est.poligonos = est.poligonos || [];
+
+  // ----- trilhas e polígonos salvos no mapa -----
+  function renderTrilhas() {
+    if (renderTrilhas._l) renderTrilhas._l.remove();
+    const g = L.layerGroup();
+    for (const t of est.trilhas) if (t.pontos && t.pontos.length > 1) L.polyline(t.pontos, { color: "#E53935", weight: 3, opacity: 0.7 }).addTo(g);
+    g.addTo(map); renderTrilhas._l = g;
+  }
+  function renderPoligonos() {
+    if (renderPoligonos._l) renderPoligonos._l.remove();
+    const g = L.layerGroup();
+    for (const p of est.poligonos) {
+      if (!p.coords || p.coords.length < 3) continue;
+      const poly = L.polygon(p.coords, { color: "#2E7D32", weight: 2, fillColor: "#43A047", fillOpacity: 0.25 });
+      poly.bindTooltip(`${esc(p.nome || "polígono")} · ${fmtNum(p.areaM2 / 10000, 4)} ha`);
+      poly.on("click", async () => { if (confirm(`Excluir o polígono "${p.nome || ""}"?`)) { est.poligonos = est.poligonos.filter((x) => x.id !== p.id); await salvarJa(); renderPoligonos(); } });
+      poly.addTo(g);
+    }
+    g.addTo(map); renderPoligonos._l = g;
+  }
+  renderTrilhas(); renderPoligonos();
+
+  // ----- bússola (orientação do aparelho) -----
+  let bussolaOn = false;
+  function onOrient(ev) {
+    let h = (ev.webkitCompassHeading != null) ? ev.webkitCompassHeading
+      : (ev.absolute && ev.alpha != null) ? (360 - ev.alpha) : null;
+    if (h == null) return;
+    const rosa = $("#bussola-rosa"), deg = $("#bussola-deg");
+    if (rosa) rosa.style.transform = `rotate(${-h}deg)`;
+    if (deg) deg.textContent = `${fmtNum(h, 0)}°`;
+  }
+  $("#censo-bussola").onclick = async () => {
+    bussolaOn = !bussolaOn;
+    $("#censo-bussola").classList.toggle("ativo", bussolaOn);
+    const w = $("#bussola"); if (w) w.hidden = !bussolaOn;
+    if (bussolaOn) {
+      try {
+        if (typeof DeviceOrientationEvent !== "undefined" && DeviceOrientationEvent.requestPermission) {
+          const p = await DeviceOrientationEvent.requestPermission();
+          if (p !== "granted") { bussolaOn = false; if (w) w.hidden = true; $("#censo-bussola").classList.remove("ativo"); return; }
+        }
+      } catch (e) { /* */ }
+      _orientHandler = onOrient;
+      window.addEventListener("deviceorientationabsolute", _orientHandler);
+      window.addEventListener("deviceorientation", _orientHandler);
+    } else if (_orientHandler) {
+      window.removeEventListener("deviceorientationabsolute", _orientHandler);
+      window.removeEventListener("deviceorientation", _orientHandler);
+      _orientHandler = null;
+    }
+  };
+
+  // ----- gravador de trilha (start/stop) -----
+  $("#censo-trilha").onclick = async () => {
+    if (!gravando) {
+      gravando = true;
+      trilhaPts = []; if (trilhaLinha) { trilhaLinha.remove(); trilhaLinha = null; }
+      if (userLatLng) trilhaPts.push([userLatLng.lat, userLatLng.lng]);
+      $("#censo-trilha").classList.add("ativo");
+      const b = $("#trk-banner"); if (b) b.hidden = false;
+      atualizarTrkBanner();
+    } else {
+      gravando = false;
+      $("#censo-trilha").classList.remove("ativo");
+      if (trilhaPts.length >= 2) {
+        const nome = prompt("Nome da trilha:", "Trilha " + (est.trilhas.length + 1));
+        if (nome != null) {
+          const t = novaTrilha(nome.trim() || "Trilha " + (est.trilhas.length + 1));
+          t.pontos = trilhaPts.slice();
+          est.trilhas.push(t); await salvarJa(); renderTrilhas();
+        }
+      }
+      if (trilhaLinha) { trilhaLinha.remove(); trilhaLinha = null; }
+      trilhaPts = [];
+      const b = $("#trk-banner"); if (b) { b.hidden = true; b.innerHTML = ""; }
+    }
+  };
+
+  // ----- desenho de polígono (por pontos ou à mão livre pelo cursor) -----
+  let desenho = null;
+  function limparDesenho() {
+    if (desenho) {
+      if (desenho.layer) desenho.layer.remove();
+      if (desenho.moveHandler) map.off("move", desenho.moveHandler);
+    }
+    desenho = null;
+    const barra = $("#censo-barra"); if (barra) { barra.hidden = true; barra.innerHTML = ""; }
+    mostrarAdd(true);
+    $("#censo-desenho").classList.remove("ativo");
+  }
+  function redesenharDesenho() {
+    if (!desenho) return;
+    if (desenho.layer) { desenho.layer.remove(); desenho.layer = null; }
+    if (desenho.coords.length >= 3) {
+      desenho.layer = L.polygon(desenho.coords, { color: "#FF6F00", weight: 2, fillColor: "#FFA000", fillOpacity: 0.2, dashArray: "5,5" }).addTo(map);
+    } else if (desenho.coords.length === 2) {
+      desenho.layer = L.polyline(desenho.coords, { color: "#FF6F00", weight: 2, dashArray: "5,5" }).addTo(map);
+    } else if (desenho.coords.length === 1) {
+      desenho.layer = L.circleMarker(desenho.coords[0], { radius: 4, color: "#FF6F00" }).addTo(map);
+    }
+    const area = desenho.coords.length >= 3 ? areaAnelM2(desenho.coords) : 0;
+    const info = $("#barra-info"); if (info) info.innerHTML = `${desenho.coords.length} vértices${area ? ` · <b>${fmtNum(area / 10000, 4)} ha</b>` : ""}`;
+  }
+  async function concluirDesenho() {
+    if (!desenho || desenho.coords.length < 3) { alert("Precisa de pelo menos 3 vértices."); return; }
+    const nome = prompt("Nome do polígono:", "Polígono " + (est.poligonos.length + 1));
+    if (nome == null) return;
+    const pol = novoPoligono(desenho.tipo, nome.trim() || "Polígono " + (est.poligonos.length + 1));
+    pol.coords = desenho.coords.slice();
+    pol.areaM2 = areaAnelM2(pol.coords);
+    est.poligonos.push(pol); await salvarJa();
+    limparDesenho(); renderPoligonos();
+  }
+  function iniciarDesenho(tipo) {
+    limparDesenho();
+    mostrarAdd(false);
+    $("#censo-desenho").classList.add("ativo");
+    desenho = { tipo, coords: [], layer: null, moveHandler: null };
+    const barra = $("#censo-barra"); barra.hidden = false;
+    if (tipo === "pontos") {
+      barra.innerHTML = `<span id="barra-info">0 vértices</span>
+        <button class="btn-sec" id="b-vert">+ Vértice</button>
+        <button class="btn-sec" id="b-desf">↶</button>
+        <button class="btn-grande destaque" id="b-ok">✓ Fechar</button>
+        <button class="btn-foto" id="b-cancel">✕</button>`;
+      $("#b-vert").onclick = () => { const c = map.getCenter(); desenho.coords.push([c.lat, c.lng]); redesenharDesenho(); };
+      $("#b-desf").onclick = () => { desenho.coords.pop(); redesenharDesenho(); };
+      $("#b-ok").onclick = concluirDesenho;
+      $("#b-cancel").onclick = limparDesenho;
+    } else {
+      barra.innerHTML = `<span id="barra-info">mexa o mapa pra traçar</span>
+        <button class="btn-grande destaque" id="b-ok">✓ Concluir</button>
+        <button class="btn-foto" id="b-cancel">✕</button>`;
+      let ultimo = null;
+      desenho.moveHandler = () => {
+        const c = map.getCenter();
+        if (!ultimo || distanciaM(ultimo, c) > 3) { desenho.coords.push([c.lat, c.lng]); ultimo = c; redesenharDesenho(); }
+      };
+      map.on("move", desenho.moveHandler);
+      $("#b-ok").onclick = concluirDesenho;
+      $("#b-cancel").onclick = limparDesenho;
+    }
+    redesenharDesenho();
+  }
+  $("#censo-desenho").onclick = () => {
+    if (desenho) { limparDesenho(); return; }
+    const barra = $("#censo-barra"); barra.hidden = false; mostrarAdd(false);
+    barra.innerHTML = `<span>Polígono:</span>
+      <button class="btn-sec" id="d-pontos">📍 Por pontos</button>
+      <button class="btn-sec" id="d-mao">✍️ À mão livre</button>
+      <button class="btn-foto" id="d-cancel">✕</button>`;
+    $("#d-pontos").onclick = () => iniciarDesenho("pontos");
+    $("#d-mao").onclick = () => iniciarDesenho("maolivre");
+    $("#d-cancel").onclick = () => { barra.hidden = true; barra.innerHTML = ""; mostrarAdd(true); };
+  };
 
   // form do ponto: sobe num painel (sheet) sobre o rodapé do mapa — não sai da tela
   function abrirFormPonto(pt, ehNovo) {

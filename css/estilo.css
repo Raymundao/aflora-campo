@@ -309,9 +309,29 @@ input:focus, select:focus, textarea:focus { outline: 3px solid var(--verde-claro
 .censo-fab { width: 46px; height: 46px; border-radius: 50%; background: rgba(255,255,255,.94); border: 0;
   box-shadow: 0 2px 6px rgba(0,0,0,.4); font-size: 20px; display: flex; align-items: center; justify-content: center; }
 .censo-fab:active { background: #fff; }
+.censo-fab.ativo { background: var(--verde); color: #fff; box-shadow: 0 0 0 3px rgba(46,125,50,.4), 0 2px 6px rgba(0,0,0,.4); }
 .censo-voltar { position: absolute; top: max(10px, env(safe-area-inset-top)); left: 10px; z-index: 700;
   font-size: 28px; color: var(--verde); font-weight: 700; }
-.censo-fabs { position: absolute; right: 10px; bottom: 92px; z-index: 700; display: flex; flex-direction: column; gap: 10px; }
+.censo-fabs { position: absolute; right: 10px; bottom: 92px; z-index: 700; display: flex; flex-direction: column; gap: 9px; }
+/* bússola (rosa que gira com a orientação) — canto esquerdo, sob o voltar */
+.bussola { position: absolute; top: calc(max(10px, env(safe-area-inset-top)) + 52px); left: 10px; z-index: 700;
+  display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.bussola-rosa { width: 50px; height: 50px; border-radius: 50%; background: rgba(255,255,255,.92); border: 2px solid var(--borda);
+  position: relative; box-shadow: 0 2px 6px rgba(0,0,0,.4); transition: transform .15s linear; }
+.bussola-n { position: absolute; top: 2px; left: 50%; transform: translateX(-50%); font-weight: 800; color: var(--erro-fg); font-size: 14px; }
+.bussola-rosa::after { content: "▲"; position: absolute; top: 13px; left: 50%; transform: translateX(-50%); color: var(--erro-fg); font-size: 11px; }
+.bussola-deg { background: rgba(0,0,0,.6); color: #fff; padding: 1px 8px; border-radius: 8px; font-size: 13px; font-weight: 700; }
+/* banner do gravador de trilha */
+.trk-banner { position: absolute; top: max(10px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 690;
+  background: rgba(229,57,53,.94); color: #fff; padding: 5px 14px; border-radius: var(--r-pill); font-size: var(--fs-leg); font-weight: 700;
+  box-shadow: 0 2px 8px rgba(0,0,0,.4); white-space: nowrap; }
+/* barra contextual (escolha/edição de desenho) sobre o rodapé */
+.censo-barra { position: absolute; left: 8px; right: 8px; bottom: max(14px, env(safe-area-inset-bottom)); z-index: 750;
+  background: var(--card); border: 2px solid var(--verde); border-radius: var(--r); padding: 8px; box-shadow: 0 3px 12px rgba(0,0,0,.45);
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.censo-barra > span { font-size: var(--fs-leg); color: var(--texto); font-weight: 700; flex: 1 1 100%; }
+.censo-barra .btn-sec, .censo-barra .btn-grande, .censo-barra .btn-foto, .censo-barra .perigo { min-height: 44px; margin: 0; padding: 8px 12px; flex: 1; }
+.censo-barra .btn-foto { flex: 0 0 auto; min-width: 44px; }
 .censo-add-fixo { position: absolute; left: 50%; transform: translateX(-50%); bottom: max(16px, env(safe-area-inset-bottom));
   width: auto; min-width: 170px; margin: 0; z-index: 700; border-radius: var(--r-pill); box-shadow: 0 3px 10px rgba(0,0,0,.45); }
 /* painel (sheet) que sobe com o formulário */
