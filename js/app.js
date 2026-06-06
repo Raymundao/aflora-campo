@@ -23,7 +23,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v41"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v42"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -2111,15 +2111,51 @@ async function telaCenso(estratoId) {
     if (renderReferencias._l) renderReferencias._l.remove();
     const g = L.layerGroup();
     for (const r of est.referencias) {
+      const borda = r.corBorda || "#00BCD4";
       let lay;
-      if (r.tipo === "poligono") lay = L.polygon(r.coords, { color: "#00BCD4", weight: 2, fill: false, dashArray: "6,4" });
-      else if (r.tipo === "linha") lay = L.polyline(r.coords, { color: "#00BCD4", weight: 2, dashArray: "6,4" });
-      else lay = L.circleMarker(r.coords[0], { radius: 5, color: "#00BCD4" });
+      if (r.tipo === "poligono") {
+        const op = r.opacidade ?? 0;
+        lay = L.polygon(r.coords, { color: borda, weight: 2, dashArray: "6,4", fill: op > 0, fillColor: r.cor || "#00BCD4", fillOpacity: op });
+      } else if (r.tipo === "linha") {
+        lay = L.polyline(r.coords, { color: borda, weight: 2, dashArray: "6,4" });
+      } else {
+        lay = L.circleMarker(r.coords[0], { radius: 5, color: borda });
+      }
       if (r.nome) lay.bindTooltip(r.nome);
-      lay.on("click", async () => { if (confirm(`Remover a referência "${r.nome || r.tipo}"?`)) { est.referencias = est.referencias.filter((x) => x !== r); await salvarJa(); renderReferencias(); } });
+      lay.on("click", () => abrirFormReferencia(r));
       lay.addTo(g);
     }
     g.addTo(map); renderReferencias._l = g;
+  }
+  // tela de edição da referência KML (nome, cor, e — se polígono — preenchimento/transparência)
+  function abrirFormReferencia(r) {
+    const painel = $("#censo-painel"); mostrarAdd(false);
+    const ehPol = r.tipo === "poligono";
+    const opPct = Math.round((r.opacidade ?? 0) * 100);
+    painel.innerHTML = `<div class="censo-form">
+      <div class="censo-form-top"><b>Referência (${esc(r.tipo)})</b>
+        <span class="censo-form-coord">${esc(r.fonte || "KML")}</span>
+        <button class="btn-foto" id="ref-fechar">✕</button></div>
+      <label class="campo">Nome<input id="ref-nome" value="${esc(r.nome || "")}"></label>
+      <label class="campo">${ehPol ? "Cor da borda" : "Cor"}<input id="ref-borda" type="color" value="${r.corBorda || "#00BCD4"}"></label>
+      ${ehPol ? `
+      <label class="campo">Cor do preenchimento<input id="ref-cor" type="color" value="${r.cor || "#00BCD4"}"></label>
+      <label class="campo">Preenchimento (transparente → cheio): <b id="ref-op-val">${opPct}%</b>
+        <input id="ref-op" type="range" min="0" max="100" value="${opPct}"></label>` : ""}
+      <div class="acoes-linha">
+        <button class="btn-grande destaque" id="ref-ok">✓ Salvar</button>
+        <button class="perigo" id="ref-del">🗑</button>
+      </div></div>`;
+    const fechar = () => { painel.innerHTML = ""; mostrarAdd(true); };
+    $("#ref-fechar").onclick = fechar;
+    $("#ref-nome").oninput = (e) => { r.nome = e.target.value; };
+    $("#ref-borda").oninput = (e) => { r.corBorda = e.target.value; renderReferencias(); };
+    if (ehPol) {
+      $("#ref-cor").oninput = (e) => { r.cor = e.target.value; renderReferencias(); };
+      $("#ref-op").oninput = (e) => { r.opacidade = (+e.target.value) / 100; $("#ref-op-val").textContent = e.target.value + "%"; renderReferencias(); };
+    }
+    $("#ref-ok").onclick = async () => { await salvarJa(); fechar(); renderReferencias(); };
+    $("#ref-del").onclick = async () => { if (!confirm(`Remover a referência "${r.nome || r.tipo}"?`)) return; est.referencias = est.referencias.filter((x) => x !== r); await salvarJa(); fechar(); renderReferencias(); };
   }
   renderReferencias();
   $("#censo-importar").onclick = () => $("#kml-file").click();
@@ -2132,7 +2168,7 @@ async function telaCenso(estratoId) {
       await salvarJa(); renderReferencias();
       const first = geoms.find((g) => g.coords.length > 1);
       if (first) map.fitBounds(L.latLngBounds(first.coords));
-      alert(`Importado: ${geoms.length} feição(ões) de ${file.name}. Toque numa referência pra remover.`);
+      alert(`Importado: ${geoms.length} feição(ões) de ${file.name}. Toque numa referência pra editar (nome/cor) ou remover.`);
     } catch (err) { alert("Erro ao ler KML: " + (err?.message || err)); }
     e.target.value = "";
   };
