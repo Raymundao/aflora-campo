@@ -149,6 +149,12 @@ export function inventarioCensoParaMatriz(inv) {
 
 // KMZ = zip com doc.kml; Placemarks dos pontos (nome no padrão AlpineQuest do
 // Diego) + LineStrings das trilhas gravadas + Polygons desenhados.
+// #rrggbb + opacidade(0..1) → aabbggrr (ordem do KML)
+function kmlCor(hex, op) {
+  if (!hex || hex[0] !== "#" || hex.length < 7) return null;
+  const a = Math.round((op == null ? 1 : op) * 255).toString(16).padStart(2, "0");
+  return a + hex.slice(5, 7) + hex.slice(3, 5) + hex.slice(1, 3);
+}
 function kmlCenso(inv) {
   const escX = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
   const marks = pontosCenso(inv).filter(({ pt }) => pt.lat != null && pt.lon != null).map(({ est, pt }) => {
@@ -171,7 +177,9 @@ function kmlCenso(inv) {
     for (const pol of (est.poligonos || [])) {
       if (!pol.coords || pol.coords.length < 3) continue;
       const anel = pol.coords.concat([pol.coords[0]]).map(([la, lo]) => `${lo},${la}`).join(" ");
-      poligonos += `<Placemark><name>${escX(pol.nome || "polígono")}</name><Style><LineStyle><color>ff2e7d32</color><width>2</width></LineStyle><PolyStyle><color>4d43a047</color></PolyStyle></Style><Polygon><outerBoundaryIs><LinearRing><tessellate>1</tessellate><coordinates>${anel}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>`;
+      const corLinha = kmlCor(pol.corBorda, 1) || "ff2e7d32";
+      const corFill = kmlCor(pol.cor, pol.opacidade == null ? 0.3 : pol.opacidade) || "4d43a047";
+      poligonos += `<Placemark><name>${escX(pol.nome || "polígono")}</name><Style><LineStyle><color>${corLinha}</color><width>2</width></LineStyle><PolyStyle><color>${corFill}</color></PolyStyle></Style><Polygon><outerBoundaryIs><LinearRing><tessellate>1</tessellate><coordinates>${anel}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>`;
     }
   }
   return `<?xml version="1.0" encoding="UTF-8"?>

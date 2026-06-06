@@ -318,6 +318,7 @@ input:focus, select:focus, textarea:focus { outline: 3px solid var(--verde-claro
 /* bússola (rosa que gira com a orientação) — canto esquerdo, sob o voltar */
 .bussola { position: absolute; top: calc(max(10px, env(safe-area-inset-top)) + 52px); left: 10px; z-index: 700;
   display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.bussola[hidden] { display: none; }   /* hidden precisa vencer o display:flex */
 .bussola-rosa { width: 50px; height: 50px; border-radius: 50%; background: rgba(255,255,255,.92); border: 2px solid var(--borda);
   position: relative; box-shadow: 0 2px 6px rgba(0,0,0,.4); transition: transform .15s linear; }
 .bussola-n { position: absolute; top: 2px; left: 50%; transform: translateX(-50%); font-weight: 800; color: var(--erro-fg); font-size: 14px; }
@@ -331,6 +332,7 @@ input:focus, select:focus, textarea:focus { outline: 3px solid var(--verde-claro
 .censo-barra { position: absolute; left: 8px; right: 8px; bottom: max(14px, env(safe-area-inset-bottom)); z-index: 750;
   background: var(--card); border: 2px solid var(--verde); border-radius: var(--r); padding: 8px; box-shadow: 0 3px 12px rgba(0,0,0,.45);
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.censo-barra[hidden] { display: none; }   /* hidden precisa vencer o display:flex */
 .censo-barra > span { font-size: var(--fs-leg); color: var(--texto); font-weight: 700; flex: 1 1 100%; }
 .censo-barra .btn-sec, .censo-barra .btn-grande, .censo-barra .btn-foto, .censo-barra .perigo { min-height: 44px; margin: 0; padding: 8px 12px; flex: 1; }
 .censo-barra .btn-foto { flex: 0 0 auto; min-width: 44px; }
@@ -358,6 +360,17 @@ input:focus, select:focus, textarea:focus { outline: 3px solid var(--verde-claro
 .censo-form-top b { font-size: var(--fs-secao); color: var(--verde); }
 .censo-form-coord { font-size: var(--fs-leg); color: var(--texto-fraco); flex: 1; }
 .censo-form .acoes-linha .btn-grande { flex: 1; }
+/* form COMPACTO no sheet (cabe mais acima do teclado, menos rolagem) */
+.censo-sheet { max-height: 88%; }
+.censo-sheet .censo-form { padding: var(--e1) var(--e2); }
+.censo-sheet .censo-form .campo, .censo-sheet .censo-form > label { font-size: 12px; margin-bottom: 4px; gap: 3px; }
+.censo-sheet .censo-form input, .censo-sheet .censo-form select { min-height: 42px; padding: 7px 10px; font-size: 15px; }
+.censo-sheet .censo-form h3 { font-size: var(--fs-leg); margin: var(--e1) 0 4px; padding: 0; border: 0; }
+.censo-sheet .censo-form .fuste-linha { gap: 6px; margin-bottom: 5px; }
+.censo-sheet .censo-form .fuste-num { width: 24px; height: 24px; font-size: 12px; }
+.censo-sheet .censo-form .btn-grande { min-height: 46px; padding: 10px; font-size: var(--fs-corpo); }
+.censo-sheet .censo-form .btn-sec { min-height: 42px; padding: 7px 10px; font-size: var(--fs-leg); }
+.censo-sheet .censo-form .ac-cam, .censo-sheet .censo-form .ac-toggle { flex-basis: 44px; }
 /* seletor de camada (Leaflet) — emoji no lugar do PNG não-vendorizado */
 .leaflet-control-layers-toggle { background-image: none !important; width: 40px !important; height: 40px !important; position: relative; }
 .leaflet-control-layers-toggle::after { content: "🗺️"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 22px; }

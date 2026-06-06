@@ -23,7 +23,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v39"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v40"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -1838,12 +1838,43 @@ async function telaCenso(estratoId) {
     const g = L.layerGroup();
     for (const p of est.poligonos) {
       if (!p.coords || p.coords.length < 3) continue;
-      const poly = L.polygon(p.coords, { color: "#2E7D32", weight: 2, fillColor: "#43A047", fillOpacity: 0.25 });
+      const poly = L.polygon(p.coords, {
+        color: p.corBorda || "#2E7D32", weight: 2,
+        fillColor: p.cor || "#43A047", fillOpacity: p.opacidade ?? 0.25,
+      });
       poly.bindTooltip(`${esc(p.nome || "polígono")} · ${fmtNum(p.areaM2 / 10000, 4)} ha`);
-      poly.on("click", async () => { if (confirm(`Excluir o polígono "${p.nome || ""}"?`)) { est.poligonos = est.poligonos.filter((x) => x.id !== p.id); await salvarJa(); renderPoligonos(); } });
+      poly.on("click", () => abrirFormPoligono(p));
       poly.addTo(g);
     }
     g.addTo(map); renderPoligonos._l = g;
+  }
+  // tela do polígono: nome, cor de preenchimento/borda, transparência, excluir
+  function abrirFormPoligono(pol) {
+    const painel = $("#censo-painel"); mostrarAdd(false);
+    const opPct = Math.round((pol.opacidade ?? 0.25) * 100);
+    painel.innerHTML = `<div class="censo-form">
+      <div class="censo-form-top"><b>Polígono</b>
+        <span class="censo-form-coord">${fmtNum(pol.areaM2 / 10000, 4)} ha</span>
+        <button class="btn-foto" id="pol-fechar">✕</button></div>
+      <label class="campo">Nome<input id="pol-nome" value="${esc(pol.nome || "")}"></label>
+      <div class="linha2">
+        <label>Cor do preenchimento<input id="pol-cor" type="color" value="${pol.cor || "#43A047"}"></label>
+        <label>Cor da borda<input id="pol-borda" type="color" value="${pol.corBorda || "#2E7D32"}"></label>
+      </div>
+      <label class="campo">Preenchimento (transparente → cheio): <b id="pol-op-val">${opPct}%</b>
+        <input id="pol-op" type="range" min="0" max="100" value="${opPct}"></label>
+      <div class="acoes-linha">
+        <button class="btn-grande destaque" id="pol-ok">✓ Salvar</button>
+        <button class="perigo" id="pol-del">🗑</button>
+      </div></div>`;
+    const fechar = () => { painel.innerHTML = ""; mostrarAdd(true); };
+    $("#pol-fechar").onclick = fechar;
+    $("#pol-nome").oninput = (e) => { pol.nome = e.target.value; };
+    $("#pol-cor").oninput = (e) => { pol.cor = e.target.value; renderPoligonos(); };
+    $("#pol-borda").oninput = (e) => { pol.corBorda = e.target.value; renderPoligonos(); };
+    $("#pol-op").oninput = (e) => { pol.opacidade = (+e.target.value) / 100; $("#pol-op-val").textContent = e.target.value + "%"; renderPoligonos(); };
+    $("#pol-ok").onclick = async () => { await salvarJa(); fechar(); renderPoligonos(); };
+    $("#pol-del").onclick = async () => { if (!confirm(`Excluir o polígono "${pol.nome || ""}"?`)) return; est.poligonos = est.poligonos.filter((x) => x.id !== pol.id); await salvarJa(); fechar(); renderPoligonos(); };
   }
   renderTrilhas(); renderPoligonos();
 
@@ -2018,9 +2049,15 @@ async function telaCenso(estratoId) {
       <div class="censo-form-top"><b>Pontos (${est.pontos.length})</b>
         <label class="ord-mini" style="flex:1">Organizar <select id="lst-ord">${ordOpts}</select></label>
         <button class="btn-foto" id="lst-fechar">✕</button></div>
+      <div class="acoes-linha wrap">
+        <button class="btn-sec" id="lst-kmz">⬇ KMZ</button>
+        <button class="btn-sec" id="lst-xlsx">⬇ Tabela (XLSX)</button>
+      </div>
       <div class="cards">${itens}</div></div>`;
     $("#lst-ord").onchange = (e) => { localStorage.setItem("aflora-censo-ord", e.target.value); abrirLista(); };
     $("#lst-fechar").onclick = () => { painel.innerHTML = ""; mostrarAdd(true); };
+    $("#lst-kmz").onclick = () => exportarCensoKMZ(inv);
+    $("#lst-xlsx").onclick = () => exportarCensoXLSX(inv);
     $$("[data-pt]").forEach((el) => {
       el.onclick = () => {
         const pt = est.pontos.find((x) => x.id === el.dataset.pt);
@@ -2114,6 +2151,12 @@ async function telaCenso(estratoId) {
         ${!ehNovo ? '<button class="perigo" id="cf-excluir">🗑</button>' : ""}
       </div>
     </div>`;
+    // ao focar um campo, rola ele pro centro (acima do teclado) depois que o teclado abre
+    painel.addEventListener("focusin", (e) => {
+      if (e.target.matches && e.target.matches("input, select")) {
+        setTimeout(() => { try { e.target.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (er) { /* */ } }, 250);
+      }
+    });
     const ligarFustes = () => {
       $$(".cf-cap").forEach((el) => { el.oninput = () => { pt.fustes[+el.dataset.i].capCm = parseFloat(el.value) || null; }; });
       $$(".cf-alt").forEach((el) => { el.oninput = () => { pt.fustes[+el.dataset.i].alturaM = parseFloat(el.value) || null; }; });
