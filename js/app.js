@@ -24,7 +24,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v45"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v46"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -229,6 +229,21 @@ const FITO_TIPOS = [
   { nome: "Pastagem", cor: "#FF8A65" },
   { nome: "Antrópico / Outro", cor: "#9E9E9E" },
 ];
+// estilos de linha (forma) pro dashArray do Leaflet
+const DASH = { solida: null, tracejada: "8,6", pontilhada: "2,7", "traço-ponto": "10,6,2,6" };
+const dashArrayDe = (estilo) => (estilo && estilo in DASH) ? DASH[estilo] : null;
+const FORMAS_PONTO = ["círculo", "quadrado", "losango", "triângulo"];
+// ícone de um ponto de referência (forma + tamanho + cor)
+function iconeRefPonto(forma, tam, cor) {
+  const s = Math.max(8, tam || 12);
+  const b = "border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.5)";
+  let html;
+  if (forma === "quadrado") html = `<div style="width:${s}px;height:${s}px;background:${cor};${b}"></div>`;
+  else if (forma === "losango") html = `<div style="width:${s}px;height:${s}px;background:${cor};${b};transform:rotate(45deg)"></div>`;
+  else if (forma === "triângulo") html = `<div style="width:0;height:0;border-left:${s / 1.6}px solid transparent;border-right:${s / 1.6}px solid transparent;border-bottom:${s}px solid ${cor};filter:drop-shadow(0 1px 2px rgba(0,0,0,.5))"></div>`;
+  else html = `<div style="width:${s}px;height:${s}px;border-radius:50%;background:${cor};${b}"></div>`;
+  return window.L.divIcon({ className: "ref-ponto", html, iconSize: [s + 6, s + 6] });
+}
 
 function labelEstrato(est) {
   const fito = rotuloFito(est.fitofisionomia);
@@ -1777,7 +1792,8 @@ async function telaCenso(estratoId, modo = "censo") {
   else if (inv.fitos[0]?.coords?.[0]) centro = inv.fitos[0].coords[0];
   else if (inv.geoRefs[0]?.coords?.[0]) centro = inv.geoRefs[0].coords[0];
   // rotate:true (plugin leaflet-rotate) permite girar o mapa quando a bússola liga.
-  const map = L.map("mapa", { zoomControl: false, attributionControl: false, maxZoom: 21, rotate: true, rotateControl: false, touchRotate: false }).setView(centro, 17);
+  // fadeAnimation:false → tiles entram secos (sem fade) = some o "fantasma/sombra" no zoom.
+  const map = L.map("mapa", { zoomControl: false, attributionControl: false, maxZoom: 21, rotate: true, rotateControl: false, touchRotate: false, fadeAnimation: false }).setView(centro, 17);
   L.control.zoom({ position: "bottomleft" }).addTo(map);
   _mapa = map;
   // camadas de satélite + seletor (igual "Mapas disponíveis" do AlpineQuest).
@@ -1823,7 +1839,9 @@ async function telaCenso(estratoId, modo = "censo") {
       lbl.innerHTML = "<span>aguardando GPS…</span>";
     }
   }
-  map.on("move", atualizarLeitura);
+  // atualiza a linha/leitura também durante e ao fim do zoom (não só no pan),
+  // senão a linha "trava" enquanto dá zoom-out.
+  map.on("move zoom zoomend viewreset", atualizarLeitura);
 
   // rastro recente (breadcrumb): segmentos amarelos que vão sumindo conforme ando.
   const RASTRO_MAX = 30;
@@ -1926,7 +1944,7 @@ async function telaCenso(estratoId, modo = "censo") {
     for (const p of inv.fitos) {
       if (!p.coords || p.coords.length < 3) continue;
       const poly = L.polygon(p.coords, {
-        color: p.corBorda || "#2E7D32", weight: 2,
+        color: p.corBorda || "#2E7D32", weight: p.peso || 2, dashArray: dashArrayDe(p.estilo),
         fillColor: p.cor || "#43A047", fillOpacity: p.opacidade ?? 0.25,
       });
       const rot = [p.fito, p.nome].filter(Boolean).join(" · ") || "fitofisionomia";
@@ -1954,12 +1972,18 @@ async function telaCenso(estratoId, modo = "censo") {
       </div>
       <label class="campo">Preenchimento (transparente → cheio): <b id="pol-op-val">${opPct}%</b>
         <input id="pol-op" type="range" min="0" max="100" value="${opPct}"></label>
+      <div class="linha2">
+        <label>Estilo da linha<select id="pol-estilo">${["solida", "tracejada", "pontilhada", "traço-ponto"].map((s) => `<option value="${s}" ${s === (pol.estilo || "solida") ? "selected" : ""}>${s}</option>`).join("")}</select></label>
+        <label>Largura: <b id="pol-peso-val">${pol.peso || 2}</b><input id="pol-peso" type="range" min="1" max="8" value="${pol.peso || 2}"></label>
+      </div>
       <div class="acoes-linha">
         <button class="btn-grande destaque" id="pol-ok">✓ Salvar</button>
         <button class="perigo" id="pol-del">🗑</button>
       </div></div>`;
     const fechar = () => { painel.innerHTML = ""; mostrarAdd(true); };
     $("#pol-fechar").onclick = fechar;
+    $("#pol-estilo").onchange = (e) => { pol.estilo = e.target.value; renderPoligonos(); };
+    $("#pol-peso").oninput = (e) => { pol.peso = +e.target.value; $("#pol-peso-val").textContent = e.target.value; renderPoligonos(); };
     // escolher o tipo já sugere a cor padrão dele (preenchimento + borda)
     $("#pol-fito").onchange = (e) => {
       pol.fito = e.target.value;
@@ -2208,14 +2232,15 @@ async function telaCenso(estratoId, modo = "censo") {
     for (const r of inv.geoRefs) {
       const borda = r.corBorda || "#00BCD4";
       let lay;
+      const dash = r.estilo ? dashArrayDe(r.estilo) : "6,4"; // tracejado por padrão (referência)
       if (r.tipo === "poligono") {
         const op = r.opacidade ?? 0;
         // fill:true sempre (mesmo com opacidade 0) pra a área toda pegar o clique
-        lay = L.polygon(r.coords, { color: borda, weight: 2, dashArray: "6,4", fill: true, fillColor: r.cor || "#00BCD4", fillOpacity: op });
+        lay = L.polygon(r.coords, { color: borda, weight: r.peso || 2, dashArray: dash, fill: true, fillColor: r.cor || "#00BCD4", fillOpacity: op });
       } else if (r.tipo === "linha") {
-        lay = L.polyline(r.coords, { color: borda, weight: 2, dashArray: "6,4" });
+        lay = L.polyline(r.coords, { color: borda, weight: r.peso || 2, dashArray: dash });
       } else {
-        lay = L.circleMarker(r.coords[0], { radius: 5, color: borda });
+        lay = L.marker(r.coords[0], { icon: iconeRefPonto(r.forma, r.tamanho, borda) });
       }
       if (r.nome) lay.bindTooltip(r.nome);
       lay.on("click", () => abrirFormReferencia(r));
@@ -2233,7 +2258,16 @@ async function telaCenso(estratoId, modo = "censo") {
         <span class="censo-form-coord">${esc(r.fonte || "KML")}</span>
         <button class="btn-foto" id="ref-fechar">✕</button></div>
       <label class="campo">Nome<input id="ref-nome" value="${esc(r.nome || "")}"></label>
-      <label class="campo">${ehPol ? "Cor da borda" : "Cor"}<input id="ref-borda" type="color" value="${r.corBorda || "#00BCD4"}"></label>
+      <label class="campo">${r.tipo === "ponto" ? "Cor" : "Cor da borda/linha"}<input id="ref-borda" type="color" value="${r.corBorda || "#00BCD4"}"></label>
+      ${r.tipo === "ponto" ? `
+      <div class="linha2">
+        <label>Forma<select id="ref-forma">${FORMAS_PONTO.map((f) => `<option value="${f}" ${f === (r.forma || "círculo") ? "selected" : ""}>${f}</option>`).join("")}</select></label>
+        <label>Tamanho: <b id="ref-tam-val">${r.tamanho || 12}</b><input id="ref-tam" type="range" min="8" max="30" value="${r.tamanho || 12}"></label>
+      </div>` : `
+      <div class="linha2">
+        <label>Estilo da linha<select id="ref-estilo">${["solida", "tracejada", "pontilhada", "traço-ponto"].map((s) => `<option value="${s}" ${s === (r.estilo || "tracejada") ? "selected" : ""}>${s}</option>`).join("")}</select></label>
+        <label>Largura: <b id="ref-peso-val">${r.peso || 2}</b><input id="ref-peso" type="range" min="1" max="8" value="${r.peso || 2}"></label>
+      </div>`}
       ${ehPol ? `
       <label class="campo">Cor do preenchimento<input id="ref-cor" type="color" value="${r.cor || "#00BCD4"}"></label>
       <label class="campo">Preenchimento (transparente → cheio): <b id="ref-op-val">${opPct}%</b>
@@ -2246,6 +2280,13 @@ async function telaCenso(estratoId, modo = "censo") {
     $("#ref-fechar").onclick = fechar;
     $("#ref-nome").oninput = (e) => { r.nome = e.target.value; };
     $("#ref-borda").oninput = (e) => { r.corBorda = e.target.value; renderReferencias(); };
+    if (r.tipo === "ponto") {
+      $("#ref-forma").onchange = (e) => { r.forma = e.target.value; renderReferencias(); };
+      $("#ref-tam").oninput = (e) => { r.tamanho = +e.target.value; $("#ref-tam-val").textContent = e.target.value; renderReferencias(); };
+    } else {
+      $("#ref-estilo").onchange = (e) => { r.estilo = e.target.value; renderReferencias(); };
+      $("#ref-peso").oninput = (e) => { r.peso = +e.target.value; $("#ref-peso-val").textContent = e.target.value; renderReferencias(); };
+    }
     if (ehPol) {
       $("#ref-cor").oninput = (e) => { r.cor = e.target.value; renderReferencias(); };
       $("#ref-op").oninput = (e) => { r.opacidade = (+e.target.value) / 100; $("#ref-op-val").textContent = e.target.value + "%"; renderReferencias(); };
