@@ -3,6 +3,7 @@
 import { volumeIndividuo, dapDeCap } from "./calculos.js";
 import { BB_MIDPOINT } from "./modelo.js";
 import { gerarXlsx } from "./xlsx.js";
+import { criarZip } from "./zip.js";
 
 export function inventarioParaJSON(inv) {
   return JSON.stringify(inv, null, 2);
@@ -118,6 +119,49 @@ export function inventarioHerbaceoParaCSV(inv) {
   return linhas.join("\r\n");
 }
 
+// ---------- estrato CENSO (pontos georreferenciados) ----------
+export function temCenso(inv) {
+  return (inv.estratos || []).some((e) => e.metodo === "censo");
+}
+function pontosCenso(inv) {
+  const out = [];
+  for (const est of inv.estratos) {
+    if (est.metodo !== "censo") continue;
+    for (const pt of (est.pontos || [])) out.push({ est, pt });
+  }
+  return out;
+}
+const COLS_CENSO = ["estrato", "fitofisionomia", "placa", "especie", "lat", "lon", "alt_m", "fuste", "cap_cm", "dap_cm", "altura_m", "vol_aereo_m3", "vol_total_m3"];
+export function inventarioCensoParaMatriz(inv) {
+  const linhas = [COLS_CENSO.slice()];
+  for (const { est, pt } of pontosCenso(inv)) {
+    pt.fustes.forEach((f, i) => {
+      if (f.capCm == null || f.alturaM == null) return;
+      const vi = volumeIndividuo([f], est.fitofisionomia || "mata_fes", est.coefsCustom);
+      linhas.push([est.nome || "", est.fitofisionomia || "", pt.placa || "", pt.especie || "",
+        pt.lat ?? "", pt.lon ?? "", pt.alt ?? "", i + 1,
+        arred(f.capCm, 1), arred(dapDeCap(f.capCm), 2), arred(f.alturaM, 1),
+        arred(vi.vol_aereo, 6), arred(vi.vol_total, 6)]);
+    });
+  }
+  return linhas;
+}
+
+// KMZ = zip com doc.kml; 1 Placemark por ponto. Nome no padrão AlpineQuest do Diego.
+function kmlCenso(inv) {
+  const escX = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  const marks = pontosCenso(inv).filter(({ pt }) => pt.lat != null && pt.lon != null).map(({ est, pt }) => {
+    const caps = pt.fustes.map((f) => f.capCm).filter((v) => v != null).map((v) => numBR(v, 1)).join("+");
+    const alts = pt.fustes.map((f) => f.alturaM).filter((v) => v != null).map((v) => numBR(v, 1)).join("/");
+    const nome = [pt.placa, pt.especie, caps ? `CAP ${caps}` : "", alts ? `H ${alts}` : ""].filter(Boolean).join(" | ");
+    const desc = `Estrato: ${est.nome || ""}\nEspécie: ${pt.especie || ""}\nCAP (cm): ${caps || "—"}\nAltura (m): ${alts || "—"}`;
+    const coord = `${pt.lon},${pt.lat}${pt.alt != null ? "," + pt.alt : ""}`;
+    return `<Placemark><name>${escX(nome || "ponto")}</name><description>${escX(desc)}</description><Point><coordinates>${coord}</coordinates></Point></Placemark>`;
+  }).join("");
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${escX(inv.nome)} — censo</name>${marks}</Document></kml>`;
+}
+
 const MIME = {
   xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   csv: "text/csv",
@@ -175,6 +219,12 @@ export function exportarXLSX(inv) { baixar(`${slug(inv.nome)}.xlsx`, blobXLSX(in
 const blobHerbXLSX = (inv) => gerarXlsx(inventarioHerbaceoParaMatriz(inv), "Herbaceo");
 export function exportarHerbaceoXLSX(inv) { baixar(`${slug(inv.nome)}_herbaceo.xlsx`, blobHerbXLSX(inv), MIME.xlsx); }
 export function exportarHerbaceoCSV(inv) { baixar(`${slug(inv.nome)}_herbaceo.csv`, inventarioHerbaceoParaCSV(inv), MIME.csv); }
+
+export function exportarCensoXLSX(inv) { baixar(`${slug(inv.nome)}_censo.xlsx`, gerarXlsx(inventarioCensoParaMatriz(inv), "Censo"), MIME.xlsx); }
+export function exportarCensoKMZ(inv) {
+  const zip = criarZip([{ nome: "doc.kml", dados: kmlCenso(inv) }]);
+  baixar(`${slug(inv.nome)}_censo.kmz`, zip, "application/vnd.google-earth.kmz");
+}
 
 // Compartilha o XLSX; se não suportado, baixa. Retorna { ok, motivo }.
 export async function compartilharXLSX(inv) {

@@ -291,6 +291,34 @@ input:focus, select:focus, textarea:focus { outline: 3px solid var(--verde-claro
 .bb-legenda li b { color: var(--texto); display: inline-block; min-width: 18px; }
 .bb-legenda small { color: var(--texto-fraco); font-size: 12px; }
 
+/* ---------- CENSO (mapa Leaflet estilo AlpineQuest) ---------- */
+.censo-top { background: var(--card); border: 1.5px solid var(--borda); border-radius: var(--r-sm);
+  padding: 6px var(--e2); font-size: var(--fs-leg); color: var(--texto); font-weight: 600; text-align: center; margin-bottom: var(--e1); }
+.mapa-wrap { position: relative; }
+#mapa { height: 52vh; min-height: 300px; width: 100%; border-radius: var(--r); border: 2px solid var(--borda); background: #ddd; z-index: 0; }
+/* mira central fixa (o ponto cai aqui) */
+.censo-mira { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 500;
+  font-size: 30px; line-height: 1; color: #fff; text-shadow: 0 0 3px #000, 0 0 3px #000; pointer-events: none; font-weight: 700; }
+.censo-leitura { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); z-index: 500;
+  background: rgba(21,101,192,.92); color: #fff; padding: 6px 14px; border-radius: var(--r-pill);
+  font-size: var(--fs-corpo); font-weight: 700; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,.4); pointer-events: none; }
+.censo-leitura b { font-size: 1.1em; }
+.censo-acoes { display: flex; gap: var(--e1); align-items: stretch; margin: var(--e1) 0; }
+.censo-acoes .btn-grande { flex: 1; margin: 0; }
+.censo-acoes .btn-sec { flex: 0 0 auto; }
+/* marcador da minha posição (ponto azul pulsante) */
+.marcador-eu .dot-eu { width: 18px; height: 18px; border-radius: 50%; background: #1565C0; border: 3px solid #fff; box-shadow: 0 0 0 2px #1565C0, 0 1px 4px rgba(0,0,0,.5); }
+/* pin de cada ponto do censo */
+.marcador-ponto .pin-ponto { min-width: 26px; height: 26px; padding: 0 5px; border-radius: var(--r-pill);
+  background: var(--verde); color: #fff; border: 2px solid #fff; display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700; box-shadow: 0 1px 4px rgba(0,0,0,.5); }
+/* form inline do ponto (embaixo do mapa) */
+.censo-form { background: var(--card); border: 2px solid var(--verde); border-radius: var(--r); padding: var(--e2) var(--e3); margin-top: var(--e2); box-shadow: var(--sombra); }
+.censo-form-top { display: flex; align-items: center; gap: var(--e2); margin-bottom: var(--e1); }
+.censo-form-top b { font-size: var(--fs-secao); color: var(--verde); }
+.censo-form-coord { font-size: var(--fs-leg); color: var(--texto-fraco); flex: 1; }
+.censo-form .acoes-linha .btn-grande { flex: 1; }
+
 /* ---------- CONAMA ---------- */
 .conama-opts { display: flex; gap: var(--e1); flex-wrap: wrap; }
 .conama-opt { flex: 1; min-width: 96px; min-height: var(--toque); background: var(--card); border: 2px solid var(--borda);

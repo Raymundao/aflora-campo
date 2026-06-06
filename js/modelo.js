@@ -117,6 +117,22 @@ export function novoFuste() {
   return { capCm: null, alturaM: null };
 }
 
+// ---------- estrato CENSO (pontos georreferenciados, estilo AlpineQuest) ----------
+// Cada ponto = indivíduo com coordenada própria + fustes (multi-tronco). Vive em
+// estrato.pontos (sem parcela, sem erro amostral). Volume pela equação do fito.
+export function novoPontoCenso(lat = null, lon = null, alt = null) {
+  return { id: novoId("pt"), placa: "", especie: "", lat, lon, alt, fustes: [novoFuste()] };
+}
+export function resultadosCenso(inv, estratoId) {
+  const est = inv.estratos.find((e) => e.id === estratoId);
+  const pontos = (est && est.pontos) || [];
+  let volAereo = 0;
+  for (const pt of pontos) volAereo += volumeIndividuo(pt.fustes, est.fitofisionomia, est.coefsCustom).vol_aereo;
+  const especies = new Set(pontos.map((p) => (p.especie || "").trim()).filter(Boolean));
+  const comCoord = pontos.filter((p) => p.lat != null && p.lon != null).length;
+  return { nPontos: pontos.length, comCoord, volAereo, riqueza: especies.size };
+}
+
 // ---------- estrato herbáceo (Braun-Blanquet / CONAMA 423) ----------
 export const BB_CLASSES = ["r", "+", "1", "2", "3", "4", "5"];
 // ponto-médio de cobertura (%) de cada classe BB (Mueller-Dombois & Ellenberg)

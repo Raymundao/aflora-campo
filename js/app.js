@@ -10,17 +10,19 @@ import {
   BB_CLASSES, BB_MIDPOINT, BB_DESC, ORIGENS_HERB, novoTaxon,
   resultadosHerbaceo, taxonsDoEstrato,
   habitoEspecie, setHabitoEspecie,
+  novoPontoCenso, resultadosCenso,
 } from "./modelo.js";
 import { volumeIndividuo, EQUACOES_VOLUME } from "./calculos.js";
 import {
   exportarJSON, exportarCSV, exportarXLSX, prepararXLSX, baixar,
   temHerbaceo, exportarHerbaceoXLSX, exportarHerbaceoCSV,
+  temCenso, exportarCensoKMZ, exportarCensoXLSX,
 } from "./export.js";
 import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v34"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v35"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -204,6 +206,7 @@ const HERB_FITOS = {
 };
 const rotuloFito = (fito) => EQUACOES_VOLUME[fito]?.rotulo || HERB_FITOS[fito] || fito || "—";
 const ehHerbaceo = (est) => est?.metodo === "herbaceo";
+const ehCenso = (est) => est?.metodo === "censo";
 
 function labelEstrato(est) {
   const fito = rotuloFito(est.fitofisionomia);
@@ -265,13 +268,19 @@ async function telaInventario(id) {
   $("#cfg").onclick = telaConfig;
   $("#ir-especies").onclick = () => telaEspecies(inv.id);
   $("#ir-exportar").onclick = () => telaExportar(inv.id);
-  $$("[data-estrato]").forEach((el) => { el.onclick = () => telaParcelasDoEstrato(el.dataset.estrato); });
+  $$("[data-estrato]").forEach((el) => {
+    el.onclick = () => {
+      const e = inv.estratos.find((x) => x.id === el.dataset.estrato);
+      if (ehCenso(e)) telaCenso(el.dataset.estrato); else telaParcelasDoEstrato(el.dataset.estrato);
+    };
+  });
 }
 
 // Completude do estrato (% pronto) = média de: erro amostral batido · campos das
 // parcelas preenchidos · fotos de parcela nos 4 tipos. Também devolve `pendencias`
 // (lista do que falta, por parcela) pro botão ⓘ explicar onde está o buraco.
 function completudeEstrato(inv, estrato, resErro, fotos) {
+  if (ehCenso(estrato)) return completudeCenso(estrato);
   if (ehHerbaceo(estrato)) return completudeHerbaceo(inv, estrato, fotos);
   const parcelas = inv.parcelas.filter((p) => p.estratoId === estrato.id);
   const alvo = inv.config.erroAlvoPct;
@@ -325,6 +334,23 @@ function completudeEstrato(inv, estrato, resErro, fotos) {
     ],
     pendencias,
   };
+}
+
+// Completude do estrato CENSO = % de pontos com coordenada + espécie + CAP/altura.
+function completudeCenso(estrato) {
+  const pontos = estrato.pontos || [];
+  const pendencias = [];
+  let ok = 0;
+  pontos.forEach((pt, i) => {
+    const faltas = [];
+    if (pt.lat == null || pt.lon == null) faltas.push("sem coordenada");
+    if (!(pt.especie || "").trim()) faltas.push("sem espécie");
+    if (!pt.fustes.length || pt.fustes.some((f) => f.capCm == null || f.alturaM == null)) faltas.push("sem CAP/altura");
+    if (!faltas.length) ok++; else pendencias.push({ parcela: pt.placa || ("ponto #" + (i + 1)), faltas });
+  });
+  if (!pontos.length) pendencias.push({ parcela: "Censo", faltas: ["nenhum ponto ainda"] });
+  const frac = pontos.length ? ok / pontos.length : 0;
+  return { pct: Math.round(frac * 100), itens: [{ label: "Pontos completos", frac }], pendencias };
 }
 
 // Completude do estrato HERBÁCEO = média de (campos das parcelas: GPS + táxons
@@ -391,7 +417,10 @@ function barraCompletude(comp) {
 function cardEstrato(inv, r, comp) {
   const alvo = inv.config.erroAlvoPct;
   let erro;
-  if (ehHerbaceo(r.estrato)) {
+  if (ehCenso(r.estrato)) {
+    const cc = resultadosCenso(inv, r.estrato.id);
+    erro = `<div class="estrato-stats">🗺️ censo · <b>${cc.nPontos}</b> ponto(s) · riqueza <b>${cc.riqueza}</b> · ${fmtNum(cc.volAereo, 3)} m³</div>`;
+  } else if (ehHerbaceo(r.estrato)) {
     const h = resultadosHerbaceo(inv, r.estrato.id);
     erro = `<div class="estrato-stats">${h.nParcelas} parcela(s) 1×1 m · riqueza <b>${h.riqueza}</b> táxon(s)${h.covTotal ? ` · nativa <b>${fmtNum(h.covNativaRelPct, 0)}%</b> / exót.+rud. <b>${fmtNum(h.covExoticaRelPct, 0)}%</b> da cobertura` : ""}</div>`;
   } else if (!r.erro) {
@@ -505,6 +534,12 @@ function telaExportar(invId) {
         <button class="btn-sec" id="exp-herb-xlsx">⬇ XLSX</button>
         <button class="btn-sec" id="exp-herb-csv">⬇ CSV</button>
       </div>` : ""}
+      ${temCenso(inv) ? `
+      <h3 class="sec-export">Censo (pontos georreferenciados)</h3>
+      <div class="acoes-linha wrap">
+        <button class="btn-sec" id="exp-censo-kmz">⬇ KMZ</button>
+        <button class="btn-sec" id="exp-censo-xlsx">⬇ XLSX</button>
+      </div>` : ""}
 
       <h3 class="sec-export">Fotos (ZIP)</h3>
       <div class="acoes-linha wrap">
@@ -519,6 +554,10 @@ function telaExportar(invId) {
   if (temHerbaceo(inv)) {
     $("#exp-herb-xlsx").onclick = () => exportarHerbaceoXLSX(inv);
     $("#exp-herb-csv").onclick = () => exportarHerbaceoCSV(inv);
+  }
+  if (temCenso(inv)) {
+    $("#exp-censo-kmz").onclick = () => exportarCensoKMZ(inv);
+    $("#exp-censo-xlsx").onclick = () => exportarCensoXLSX(inv);
   }
   $("#exp-fotos-esp2").onclick = () => exportarZipEspecies(invId);
   $("#exp-fotos-parc").onclick = () => exportarZipParcelas(invId);
@@ -566,10 +605,10 @@ function telaConfig() {
     .map(([k, v]) => `<option value="${k}" ${k === sel ? "selected" : ""}>${esc(typeof v === "string" ? v : v.rotulo)}</option>`).join("");
   const estagioOpts = (sel) => ['<option value="">— (sem estágio)</option>']
     .concat(ESTAGIOS.map((s) => `<option value="${s}" ${s === sel ? "selected" : ""}>${s}</option>`)).join("");
-  const metodoOpts = (sel) => [["arboreo", "Arbóreo (parcelas · CAP/altura/volume)"], ["herbaceo", "Herbáceo (1×1 m · Braun-Blanquet)"]]
+  const metodoOpts = (sel) => [["arboreo", "Arbóreo (parcelas · CAP/altura/volume)"], ["herbaceo", "Herbáceo (1×1 m · Braun-Blanquet)"], ["censo", "Censo (mapa · pontos georreferenciados)"]]
     .map(([k, t]) => `<option value="${k}" ${k === (sel || "arboreo") ? "selected" : ""}>${t}</option>`).join("");
   const estratosHtml = inv.estratos.map((e) => `<div class="estrato-edit" data-est="${e.id}">
-    <div class="estrato-titulo">${esc(rotuloFito(e.fitofisionomia))}${ehHerbaceo(e) ? " · herbáceo" : (e.estagio ? " — " + esc(e.estagio) : "")}</div>
+    <div class="estrato-titulo">${esc(rotuloFito(e.fitofisionomia))}${ehHerbaceo(e) ? " · herbáceo" : ehCenso(e) ? " · censo" : (e.estagio ? " — " + esc(e.estagio) : "")}</div>
     <label>Método de levantamento<select class="e-metodo" data-est="${e.id}">${metodoOpts(e.metodo)}</select></label>
     <div class="linha2">
       <label>Fitofisionomia<select class="e-fito" data-est="${e.id}">${fitoOpts(e.fitofisionomia, e.metodo)}</select></label>
@@ -578,6 +617,8 @@ function telaConfig() {
     <div class="linha2">
       ${ehHerbaceo(e)
         ? '<div class="info" style="flex:1;margin:0">Parcela <b>1×1 m</b>; cobertura por classe Braun-Blanquet. CONAMA 423 (pós-campo).</div>'
+        : ehCenso(e)
+        ? '<div class="info" style="flex:1;margin:0">Censo: <b>pontos no mapa</b> (sem parcela, sem erro amostral). Volume pela equação do fito.</div>'
         : `<label>Área total (ha)<input type="number" step="0.0001" class="e-area" data-est="${e.id}" value="${e.areaTotalHa ?? ""}"></label>`}
       ${inv.estratos.length > 1 ? `<button class="perigo del-est" data-est="${e.id}">🗑</button>` : ""}
     </div></div>`).join("");
@@ -1561,6 +1602,220 @@ async function exportarZipParcelas(invId) {
     arquivos.push({ nome: `${chave}/${nomeSeguro(rot)}_${cont[chave]}.jpg`, dados: await carimbada.arrayBuffer() });
   }
   baixar(`${nomeSeguro(inv2.nome)}_fotos_parcelas.zip`, criarZip(arquivos), "application/zip");
+}
+
+// ============================================================
+// CENSO — mapa estilo AlpineQuest (Leaflet): posição + mira central +
+// distância/rumo ao vivo, criar pontos georreferenciados, baixar área offline.
+// ============================================================
+const TILE_ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+let _mapa = null, _watchId = null;
+
+function destruirMapa() {
+  if (_watchId != null && navigator.geolocation) { navigator.geolocation.clearWatch(_watchId); _watchId = null; }
+  if (_mapa) { try { _mapa.remove(); } catch (e) { /* */ } _mapa = null; }
+}
+// distância (m) e rumo (graus) entre dois {lat,lng} — Haversine
+function distanciaM(a, b) {
+  const R = 6371000, toR = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * toR, dLng = (b.lng - a.lng) * toR;
+  const x = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * toR) * Math.cos(b.lat * toR) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(x));
+}
+function rumoGraus(a, b) {
+  const toR = Math.PI / 180, toD = 180 / Math.PI;
+  const y = Math.sin((b.lng - a.lng) * toR) * Math.cos(b.lat * toR);
+  const x = Math.cos(a.lat * toR) * Math.sin(b.lat * toR) - Math.sin(a.lat * toR) * Math.cos(b.lat * toR) * Math.cos((b.lng - a.lng) * toR);
+  return (Math.atan2(y, x) * toD + 360) % 360;
+}
+const fmtCoordDec = (lat, lng) => `${fmtNum(lat, 6)}, ${fmtNum(lng, 6)}`;
+// XYZ tile a partir de lon/lat (Web Mercator) — pro pré-download de área
+function lonLatParaTile(lon, lat, z) {
+  const n = 2 ** z;
+  const x = Math.floor(((lon + 180) / 360) * n);
+  const latR = (lat * Math.PI) / 180;
+  const y = Math.floor(((1 - Math.log(Math.tan(latR) + 1 / Math.cos(latR)) / Math.PI) / 2) * n);
+  const clamp = (v) => Math.max(0, Math.min(n - 1, v));
+  return { x: clamp(x), y: clamp(y) };
+}
+
+async function telaCenso(estratoId) {
+  if (!inv) return telaInventarios();
+  const est = estPorId(estratoId);
+  if (!est) return telaInventario(inv.id);
+  est.pontos = est.pontos || [];
+  destruirMapa();
+  if (!window.L) {
+    app.innerHTML = `${header("Censo", () => telaInventario(inv.id))}
+      <main><div class="info">O mapa (Leaflet) não carregou. Abra com internet na 1ª vez pra ele ficar disponível offline depois.</div></main>`;
+    ligarVoltar(() => telaInventario(inv.id));
+    return;
+  }
+  const voltar = () => { destruirMapa(); telaInventario(inv.id); };
+  app.innerHTML = `${header(rotuloFito(est.fitofisionomia) + " · censo", voltar)}
+    <main class="censo-main">
+      <div class="censo-top" id="censo-coords">—</div>
+      <div class="mapa-wrap">
+        <div id="mapa"></div>
+        <div class="censo-mira">✛</div>
+        <div class="censo-leitura" id="censo-leitura">aguardando GPS…</div>
+      </div>
+      <div class="censo-acoes">
+        <button class="btn-sec" id="censo-centrar">🎯 Eu</button>
+        <button class="btn-grande destaque" id="censo-add">+ Ponto aqui</button>
+        <button class="btn-sec" id="censo-baixar">⬇ Área</button>
+      </div>
+      <div id="censo-painel"></div>
+    </main>`;
+  ligarVoltar(voltar);
+
+  const L = window.L;
+  let centro = [-19.65, -43.9];
+  const comCoord = est.pontos.filter((p) => p.lat != null);
+  if (comCoord.length) centro = [comCoord[comCoord.length - 1].lat, comCoord[comCoord.length - 1].lon];
+  const map = L.map("mapa", { zoomControl: true, attributionControl: false }).setView(centro, 17);
+  _mapa = map;
+  L.tileLayer(TILE_ESRI, { maxZoom: 19, maxNativeZoom: 19 }).addTo(map);
+  setTimeout(() => map.invalidateSize(), 120); // o container acabou de entrar no DOM
+
+  let userLatLng = null, userAlt = null, userAcc = null, userMarker = null, linha = null;
+  const iconeEu = L.divIcon({ className: "marcador-eu", html: '<div class="dot-eu"></div>', iconSize: [22, 22] });
+
+  function atualizarLeitura() {
+    const c = map.getCenter();
+    $("#censo-coords").innerHTML = `${fmtCoordDec(c.lat, c.lng)}${userAlt != null ? ` · ↑${fmtNum(userAlt, 0)} m` : ""}`;
+    const el = $("#censo-leitura");
+    if (!el) return;
+    if (userLatLng) {
+      const d = distanciaM(userLatLng, c), b = rumoGraus(userLatLng, c);
+      el.innerHTML = `→ <b>${fmtNum(d, 0)} m</b> · ${fmtNum(b, 0)}°${userAcc != null ? ` · GPS ±${fmtNum(userAcc, 0)} m` : ""}`;
+      if (!linha) linha = L.polyline([userLatLng, c], { color: "#1565C0", weight: 3, opacity: 0.9 }).addTo(map);
+      else linha.setLatLngs([userLatLng, c]);
+    } else { el.textContent = "aguardando GPS…"; }
+  }
+  map.on("move", atualizarLeitura);
+
+  if (navigator.geolocation) {
+    _watchId = navigator.geolocation.watchPosition((pos) => {
+      userLatLng = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      userAlt = pos.coords.altitude; userAcc = pos.coords.accuracy;
+      if (!userMarker) { userMarker = L.marker(userLatLng, { icon: iconeEu }).addTo(map); map.setView(userLatLng, map.getZoom()); }
+      else userMarker.setLatLng(userLatLng);
+      atualizarLeitura();
+    }, () => {}, { enableHighAccuracy: true, maximumAge: 2000, timeout: 15000 });
+  }
+
+  function renderPontos() {
+    if (renderPontos._layer) renderPontos._layer.remove();
+    const grupo = L.layerGroup();
+    est.pontos.forEach((pt, i) => {
+      if (pt.lat == null) return;
+      const ic = L.divIcon({ className: "marcador-ponto", html: `<div class="pin-ponto">${esc(pt.placa || (i + 1))}</div>`, iconSize: [30, 30] });
+      const m = L.marker([pt.lat, pt.lon], { icon: ic });
+      m.on("click", () => abrirFormPonto(pt, false));
+      grupo.addLayer(m);
+    });
+    grupo.addTo(map);
+    renderPontos._layer = grupo;
+  }
+  renderPontos();
+  atualizarLeitura();
+
+  $("#censo-centrar").onclick = () => { if (userLatLng) map.setView(userLatLng, Math.max(map.getZoom(), 18)); };
+  $("#censo-add").onclick = () => {
+    const c = map.getCenter();
+    abrirFormPonto(novoPontoCenso(c.lat, c.lng, userAlt), true);
+  };
+  $("#censo-baixar").onclick = () => baixarAreaCenso();
+
+  // form inline do ponto (painel embaixo do mapa — não sai da tela)
+  function abrirFormPonto(pt, ehNovo) {
+    const painel = $("#censo-painel");
+    const fustesHtml = () => pt.fustes.map((f, i) => `<div class="fuste-linha" data-i="${i}">
+      <span class="fuste-num">${i + 1}</span>
+      <input class="cf-cap" data-i="${i}" type="number" step="0.1" inputmode="decimal" placeholder="CAP" value="${f.capCm ?? ""}">
+      <input class="cf-alt" data-i="${i}" type="number" step="0.1" inputmode="decimal" placeholder="Altura" value="${f.alturaM ?? ""}">
+      ${pt.fustes.length > 1 ? `<button class="perigo cf-fdel" data-i="${i}">✕</button>` : "<span></span>"}
+    </div>`).join("");
+    painel.innerHTML = `<div class="censo-form">
+      <div class="censo-form-top">
+        <b>${ehNovo ? "Novo ponto" : "Editar ponto"}</b>
+        <span class="censo-form-coord">${pt.lat != null ? fmtCoordDec(pt.lat, pt.lon) : "sem coord"}</span>
+        <button class="btn-foto" id="cf-fechar">✕</button>
+      </div>
+      <label class="campo">Placa<input id="cf-placa" value="${esc(pt.placa)}" inputmode="numeric"></label>
+      <label class="campo">Espécie
+        <div class="autocomplete">
+          <input id="cf-especie" value="${esc(pt.especie)}" autocomplete="off" placeholder="Digite ou toque em ▾">
+          <button type="button" class="ac-toggle" id="cf-esp-toggle">▾</button>
+          <div class="ac-lista" id="cf-esp-lista" hidden></div>
+        </div></label>
+      <h3>Fustes <small>(CAP cm · altura m)</small></h3>
+      <div id="cf-fustes">${fustesHtml()}</div>
+      <button class="btn-sec" id="cf-addfuste">+ Fuste</button>
+      <div class="acoes-linha">
+        <button class="btn-grande destaque" id="cf-salvar">✓ Salvar</button>
+        ${!ehNovo ? '<button class="perigo" id="cf-excluir">🗑</button>' : ""}
+      </div>
+    </div>`;
+    const ligarFustes = () => {
+      $$(".cf-cap").forEach((el) => { el.oninput = () => { pt.fustes[+el.dataset.i].capCm = parseFloat(el.value) || null; }; });
+      $$(".cf-alt").forEach((el) => { el.oninput = () => { pt.fustes[+el.dataset.i].alturaM = parseFloat(el.value) || null; }; });
+      $$(".cf-fdel").forEach((el) => { el.onclick = () => { pt.fustes.splice(+el.dataset.i, 1); $("#cf-fustes").innerHTML = fustesHtml(); ligarFustes(); }; });
+    };
+    ligarFustes();
+    $("#cf-placa").oninput = (e) => { pt.placa = e.target.value; };
+    const setEsp = (v) => { pt.especie = v; };
+    $("#cf-especie").oninput = (e) => setEsp(e.target.value);
+    ligarAutocomplete($("#cf-especie"), $("#cf-esp-toggle"), $("#cf-esp-lista"), () => especiesDoInventario(inv), setEsp);
+    $("#cf-addfuste").onclick = () => { pt.fustes.push(novoFuste()); $("#cf-fustes").innerHTML = fustesHtml(); ligarFustes(); };
+    $("#cf-fechar").onclick = () => { painel.innerHTML = ""; };
+    $("#cf-salvar").onclick = async () => {
+      if (ehNovo && !est.pontos.includes(pt)) est.pontos.push(pt);
+      if ((pt.especie || "").trim()) adicionarEspecie(inv, pt.especie.trim());
+      await salvarJa();
+      painel.innerHTML = "";
+      renderPontos();
+    };
+    if (!ehNovo) {
+      $("#cf-excluir").onclick = async () => {
+        if (!confirm("Excluir este ponto?")) return;
+        est.pontos = est.pontos.filter((x) => x.id !== pt.id);
+        await salvarJa();
+        painel.innerHTML = "";
+        renderPontos();
+      };
+    }
+  }
+
+  // pré-download da área visível (zoom atual .. +2) pro cache de tiles offline
+  async function baixarAreaCenso() {
+    const painel = $("#censo-painel");
+    const b = map.getBounds();
+    const z0 = Math.round(map.getZoom());
+    const zMax = Math.min(19, z0 + 2);
+    const urls = [];
+    for (let z = z0; z <= zMax; z++) {
+      const t1 = lonLatParaTile(b.getWest(), b.getNorth(), z);
+      const t2 = lonLatParaTile(b.getEast(), b.getSouth(), z);
+      for (let x = t1.x; x <= t2.x; x++) {
+        for (let y = t1.y; y <= t2.y; y++) urls.push(TILE_ESRI.replace("{z}", z).replace("{x}", x).replace("{y}", y));
+      }
+    }
+    if (urls.length > 2000 && !confirm(`Essa área tem ${urls.length} tiles (pode demorar/pesar). Aproxime o zoom pra baixar menos, ou continue assim mesmo?`)) return;
+    painel.innerHTML = `<div class="info" id="dl-prog">Baixando 0/${urls.length} tiles…</div>`;
+    let cache;
+    try { cache = await caches.open("aflora-tiles-v1"); }
+    catch (e) { const el = $("#dl-prog"); if (el) el.textContent = "Cache indisponível neste navegador."; return; }
+    let done = 0, falhas = 0;
+    for (const u of urls) {
+      try { const r = await fetch(u); if (r.ok) await cache.put(u, r.clone()); else falhas++; }
+      catch (e) { falhas++; }
+      done++;
+      if (done % 8 === 0 || done === urls.length) { const el = $("#dl-prog"); if (el) el.textContent = `Baixando ${done}/${urls.length} tiles…`; }
+    }
+    const el = $("#dl-prog"); if (el) el.innerHTML = `✓ Área salva offline (${done - falhas}/${urls.length} tiles${falhas ? `, ${falhas} falharam` : ""}).`;
+  }
 }
 
 // ---------- boot ----------
