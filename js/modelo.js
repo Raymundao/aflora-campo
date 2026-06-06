@@ -78,24 +78,84 @@ export function renomearEspecie(inv, antigo, novo) {
   return n;
 }
 
-export function novoEstrato(fitofisionomia = "mata_fes", estagio = "") {
+// metodo: "arboreo" (parcelas com indivíduos+fustes+volume) | "herbaceo"
+// (parcelas 1×1 m com táxons + classe de cobertura Braun-Blanquet, CONAMA 423).
+export function novoEstrato(fitofisionomia = "mata_fes", estagio = "", metodo = "arboreo") {
   return {
     id: novoId("est"),
     fitofisionomia,
     estagio,
+    metodo,
     nome: rotuloEstrato(fitofisionomia, estagio),
     areaTotalHa: null,
     coefsCustom: null,
   };
 }
 export function novaParcela(estratoId, rotulo = "") {
-  return { id: novoId("par"), rotulo, estratoId, lat: null, lon: null, gpsEm: null, individuos: [] };
+  return { id: novoId("par"), rotulo, estratoId, lat: null, lon: null, gpsEm: null, individuos: [], taxons: [] };
 }
 export function novoIndividuo(placa = "") {
   return { id: novoId("ind"), placa, especie: "", fustes: [novoFuste()] };
 }
 export function novoFuste() {
   return { capCm: null, alturaM: null };
+}
+
+// ---------- estrato herbáceo (Braun-Blanquet / CONAMA 423) ----------
+export const BB_CLASSES = ["r", "+", "1", "2", "3", "4", "5"];
+// ponto-médio de cobertura (%) de cada classe BB (Mueller-Dombois & Ellenberg)
+export const BB_MIDPOINT = { r: 0.1, "+": 0.5, 1: 2.5, 2: 15, 3: 37.5, 4: 62.5, 5: 87.5 };
+export const BB_DESC = {
+  r: "solitário, cobertura ínfima", "+": "poucos, < 1%", 1: "abundante, 1–5%",
+  2: "5–25%", 3: "25–50%", 4: "50–75%", 5: "75–100%",
+};
+export const ORIGENS_HERB = ["Nativa", "Exótica", "Ruderal"];
+export function novoTaxon(nome = "") {
+  return { id: novoId("tax"), nome, bb: null, origem: null };
+}
+
+// Agregação fitossociológica do estrato herbáceo (cobertura por ponto-médio BB).
+// cobertura absoluta de um táxon = Σ(pontos-médios nas parcelas) / nº total de parcelas.
+export function resultadosHerbaceo(inv, estratoId) {
+  const parcelas = inv.parcelas.filter((p) => p.estratoId === estratoId);
+  const nParc = parcelas.length;
+  const mapa = new Map(); // nome -> { ocorre:Set, somaMid, origem }
+  for (const p of parcelas) {
+    for (const t of (p.taxons || [])) {
+      const nome = (t.nome || "").trim();
+      if (!nome) continue;
+      let e = mapa.get(nome);
+      if (!e) { e = { ocorre: new Set(), somaMid: 0, origem: null }; mapa.set(nome, e); }
+      e.ocorre.add(p.id);
+      if (t.bb && BB_MIDPOINT[t.bb] != null) e.somaMid += BB_MIDPOINT[t.bb];
+      if (!e.origem && t.origem) e.origem = t.origem;
+    }
+  }
+  const taxons = [...mapa.entries()].map(([nome, e]) => ({
+    nome,
+    nOcorre: e.ocorre.size,
+    freqAbsPct: nParc ? (100 * e.ocorre.size) / nParc : 0,
+    coberturaAbsPct: nParc ? e.somaMid / nParc : 0,
+    origem: e.origem,
+  })).sort((a, b) => b.coberturaAbsPct - a.coberturaAbsPct || a.nome.localeCompare(b.nome, "pt-BR"));
+  const covTotal = taxons.reduce((s, t) => s + t.coberturaAbsPct, 0);
+  const covNativa = taxons.filter((t) => t.origem === "Nativa").reduce((s, t) => s + t.coberturaAbsPct, 0);
+  const covExotica = taxons.filter((t) => t.origem === "Exótica" || t.origem === "Ruderal").reduce((s, t) => s + t.coberturaAbsPct, 0);
+  return {
+    nParcelas: nParc, riqueza: taxons.length, taxons, covTotal, covNativa, covExotica,
+    covNativaRelPct: covTotal ? (100 * covNativa) / covTotal : 0,
+    covExoticaRelPct: covTotal ? (100 * covExotica) / covTotal : 0,
+  };
+}
+
+// Táxons já usados no estrato herbáceo (autocomplete da tela de cobertura).
+export function taxonsDoEstrato(inv, estratoId) {
+  const set = new Set();
+  for (const p of inv.parcelas) {
+    if (p.estratoId !== estratoId) continue;
+    for (const t of (p.taxons || [])) { const v = (t.nome || "").trim(); if (v) set.add(v); }
+  }
+  return [...set].sort((a, b) => a.localeCompare(b, "pt-BR"));
 }
 
 // Área da parcela em hectares, derivada da forma escolhida.

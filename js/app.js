@@ -4,17 +4,22 @@ import * as db from "./db.js";
 import {
   novoInventario, novoEstrato, novaParcela, novoIndividuo, novoFuste,
   resultadosPorEstrato, areaParcelaHa, fmtNum, outliersDoEstrato,
-  ESTAGIOS, rotuloEstrato, mediasParcela, volumeParcelaM3,
+  ESTAGIOS, mediasParcela, volumeParcelaM3,
   semAcento, especiesDoInventario, individuosOrdenados,
   registroEspecies, adicionarEspecie, renomearEspecie,
+  BB_CLASSES, BB_MIDPOINT, BB_DESC, ORIGENS_HERB, novoTaxon,
+  resultadosHerbaceo, taxonsDoEstrato,
 } from "./modelo.js";
 import { volumeIndividuo, EQUACOES_VOLUME } from "./calculos.js";
-import { exportarJSON, exportarCSV, exportarXLSX, prepararXLSX, baixar } from "./export.js";
+import {
+  exportarJSON, exportarCSV, exportarXLSX, prepararXLSX, baixar,
+  temHerbaceo, exportarHerbaceoXLSX, exportarHerbaceoCSV,
+} from "./export.js";
 import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v29"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v30"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -43,36 +48,6 @@ document.addEventListener("click", (ev) => {
   const img = ev.target.closest && ev.target.closest(".foto-item img");
   if (img && img.src) { ev.stopPropagation(); abrirLightbox(img.src); }
 });
-
-// ---------- toque longo (segurar) → callback (ex.: excluir) ----------
-// Funciona com toque (touchstart/end) e mouse (pra testar no desktop). ~550 ms.
-// Cancela se o dedo se mover (scroll) ou soltar antes do tempo. Quando dispara,
-// liga `suprimirClique` por 700 ms pra o clique de abrir não vir logo atrás.
-let suprimirClique = false;
-function ligarPressLongo(el, onLongPress) {
-  let timer = null, alvoMovido = false;
-  const inicio = (ev) => {
-    alvoMovido = false;
-    timer = setTimeout(() => {
-      timer = null;
-      if (!alvoMovido) {
-        suprimirClique = true;
-        setTimeout(() => { suprimirClique = false; }, 700);
-        if (navigator.vibrate) navigator.vibrate(30);
-        onLongPress(ev);
-      }
-    }, 550);
-  };
-  const cancelar = () => { if (timer) { clearTimeout(timer); timer = null; } };
-  el.addEventListener("touchstart", inicio, { passive: true });
-  el.addEventListener("touchmove", () => { alvoMovido = true; cancelar(); }, { passive: true });
-  el.addEventListener("touchend", cancelar);
-  el.addEventListener("touchcancel", cancelar);
-  el.addEventListener("mousedown", inicio);
-  el.addEventListener("mousemove", () => { alvoMovido = true; cancelar(); });
-  el.addEventListener("mouseup", cancelar);
-  el.addEventListener("mouseleave", cancelar);
-}
 
 // Autocomplete custom (o <datalist> nativo não sugere no Android). Setinha abre
 // a lista toda; digitar filtra por prefixo (depois substring), sem acento.
@@ -221,9 +196,18 @@ async function telaInventarios() {
 // TELA 2 — inventário (barra de erro + parcelas)
 // ============================================================
 // Rótulo do estrato com fitofisionomia + estágio bem explícitos.
+// Fitofisionomias do método HERBÁCEO (sem equação de volume — só rótulo).
+const HERB_FITOS = {
+  cerrado_sr: "Cerrado sensu restrito", campo_cerrado: "Campo cerrado",
+  campo_sujo: "Campo sujo", campo_limpo: "Campo limpo", campo_rupestre: "Campo rupestre",
+};
+const rotuloFito = (fito) => EQUACOES_VOLUME[fito]?.rotulo || HERB_FITOS[fito] || fito || "—";
+const ehHerbaceo = (est) => est?.metodo === "herbaceo";
+
 function labelEstrato(est) {
-  const fito = EQUACOES_VOLUME[est.fitofisionomia]?.rotulo || est.fitofisionomia || "—";
-  return `<b>${esc(fito)}</b>${est.estagio ? ` <small>· estágio ${esc(est.estagio)}</small>` : " <small>· sem estágio</small>"}`;
+  const fito = rotuloFito(est.fitofisionomia);
+  const tag = ehHerbaceo(est) ? ' <span class="badge tag-herb">🌱 herbáceo</span>' : "";
+  return `<b>${esc(fito)}</b>${tag}${est.estagio ? ` <small>· estágio ${esc(est.estagio)}</small>` : (ehHerbaceo(est) ? "" : " <small>· sem estágio</small>")}`;
 }
 
 function barraErro(r, alvo) {
@@ -287,6 +271,7 @@ async function telaInventario(id) {
 // parcelas preenchidos · fotos de parcela nos 4 tipos. Também devolve `pendencias`
 // (lista do que falta, por parcela) pro botão ⓘ explicar onde está o buraco.
 function completudeEstrato(inv, estrato, resErro, fotos) {
+  if (ehHerbaceo(estrato)) return completudeHerbaceo(inv, estrato, fotos);
   const parcelas = inv.parcelas.filter((p) => p.estratoId === estrato.id);
   const alvo = inv.config.erroAlvoPct;
   const c1 = (resErro && resErro.erro && resErro.erro.erro_rel_pct <= alvo) ? 1 : 0;
@@ -341,6 +326,45 @@ function completudeEstrato(inv, estrato, resErro, fotos) {
   };
 }
 
+// Completude do estrato HERBÁCEO = média de (campos das parcelas: GPS + táxons
+// com nome/BB/origem) · (foto da parcela). Sem erro amostral.
+function completudeHerbaceo(inv, estrato, fotos) {
+  const parcelas = inv.parcelas.filter((p) => p.estratoId === estrato.id);
+  const pendencias = [];
+  let completas = 0, comFoto = 0;
+  for (const p of parcelas) {
+    const rot = p.rotulo || "(sem rótulo)";
+    const faltas = [];
+    if (p.lat == null || p.lon == null) faltas.push("GPS não marcado");
+    const taxons = p.taxons || [];
+    if (!taxons.length) {
+      faltas.push("nenhum táxon");
+    } else {
+      const semNome = taxons.filter((t) => !(t.nome || "").trim()).length;
+      const semBB = taxons.filter((t) => !t.bb).length;
+      const semOrig = taxons.filter((t) => !t.origem).length;
+      if (semNome) faltas.push(`${semNome} táxon(s) sem nome`);
+      if (semBB) faltas.push(`${semBB} táxon(s) sem classe BB`);
+      if (semOrig) faltas.push(`${semOrig} táxon(s) sem origem`);
+    }
+    const temFoto = fotos.some((f) => f.tipo === "parcela" && f.refKey === p.id);
+    if (!temFoto) faltas.push("sem foto da parcela");
+    const gpsOk = p.lat != null && p.lon != null;
+    const taxOk = taxons.length >= 1 && taxons.every((t) => (t.nome || "").trim() && t.bb && t.origem);
+    if (gpsOk && taxOk) completas++;
+    if (temFoto) comFoto++;
+    if (faltas.length) pendencias.push({ parcela: rot, faltas });
+  }
+  const c2 = parcelas.length ? completas / parcelas.length : 0;
+  const c3 = parcelas.length ? comFoto / parcelas.length : 0;
+  if (!parcelas.length) pendencias.push({ parcela: "Estrato herbáceo", faltas: ["nenhuma parcela ainda"] });
+  return {
+    pct: Math.round(((c2 + c3) / 2) * 100),
+    itens: [{ label: "Campos", frac: c2 }, { label: "Fotos", frac: c3 }],
+    pendencias,
+  };
+}
+
 function barraCompletude(comp) {
   const cls = comp.pct >= 100 ? "verde" : comp.pct >= 60 ? "amarelo" : "vermelho";
   const itens = comp.itens.map((i) =>
@@ -366,7 +390,10 @@ function barraCompletude(comp) {
 function cardEstrato(inv, r, comp) {
   const alvo = inv.config.erroAlvoPct;
   let erro;
-  if (!r.erro) {
+  if (ehHerbaceo(r.estrato)) {
+    const h = resultadosHerbaceo(inv, r.estrato.id);
+    erro = `<div class="estrato-stats">${h.nParcelas} parcela(s) 1×1 m · riqueza <b>${h.riqueza}</b> táxon(s)${h.covTotal ? ` · nativa <b>${fmtNum(h.covNativaRelPct, 0)}%</b> / exót.+rud. <b>${fmtNum(h.covExoticaRelPct, 0)}%</b> da cobertura` : ""}</div>`;
+  } else if (!r.erro) {
     erro = `<div class="aguardando">${r.nParcelas} parcela(s) — erro a partir de 2</div>`;
   } else {
     const e = r.erro.erro_rel_pct;
@@ -395,27 +422,42 @@ async function telaParcelasDoEstrato(estratoId) {
   for (const f of fotos) if (f.tipo === "parcela") fotosPorParc[f.refKey] = (fotosPorParc[f.refKey] || 0) + 1;
   const r = resultadosPorEstrato(inv).find((x) => x.estrato.id === estratoId);
   const comp = completudeEstrato(inv, estrato, r, fotos);
+  const herb = ehHerbaceo(estrato);
   const parcelas = inv.parcelas.filter((p) => p.estratoId === estratoId);
   const parcelasHtml = parcelas.length
     ? parcelas.map((p) => {
-        const volM3 = p.individuos.reduce((s, ind) => s + volumeIndividuo(ind.fustes, estrato.fitofisionomia).vol_aereo, 0);
-        const mha = aHa ? volM3 / aHa : null;
         const nf = fotosPorParc[p.id] || 0;
+        let sub;
+        if (herb) {
+          const nt = (p.taxons || []).length;
+          sub = `${nt} táxon(s)${p.lat != null ? " · 📍" : ""}`;
+        } else {
+          const volM3 = p.individuos.reduce((s, ind) => s + volumeIndividuo(ind.fustes, estrato.fitofisionomia).vol_aereo, 0);
+          const mha = aHa ? volM3 / aHa : null;
+          sub = `${p.individuos.length} indiv. · ${fmtNum(volM3, 4)} m³${mha != null ? " · " + fmtNum(mha, 1) + " m³/ha" : ""}${p.lat != null ? " · 📍" : ""}`;
+        }
         return `<div class="card">
           <div class="card-corpo" data-parc="${p.id}">
             <div class="card-nome">${esc(p.rotulo || "(sem rótulo)")}</div>
-            <div class="card-sub">${p.individuos.length} indiv. · ${fmtNum(volM3, 4)} m³${mha != null ? " · " + fmtNum(mha, 1) + " m³/ha" : ""}${p.lat != null ? " · 📍" : ""}</div>
+            <div class="card-sub">${sub}</div>
           </div>
-          <div class="card-acoes"><button class="btn-foto" data-fotos-parc="${p.id}" title="Fotos da parcela">📷${nf ? " " + nf : ""}</button></div></div>`;
+          <div class="card-acoes">
+            <button class="btn-foto" data-fotos-parc="${p.id}" title="Fotos da parcela">📷${nf ? " " + nf : ""}</button>
+            <button class="btn-foto perigo-icone" data-del-parc="${p.id}" title="Excluir parcela">🗑</button>
+          </div></div>`;
       }).join("")
     : '<p class="vazio">Nenhuma parcela neste estrato. Toque em "+ Nova parcela".</p>';
 
-  app.innerHTML = `${header(EQUACOES_VOLUME[estrato.fitofisionomia]?.rotulo || "Estrato", () => telaInventario(inv.id))}
+  const painelTopo = herb
+    ? `<div class="erro-estrato-box neutro">${(() => { const h = resultadosHerbaceo(inv, estratoId); return `riqueza <b>${h.riqueza}</b> táxon(s) em ${h.nParcelas} parcela(s)${h.covTotal ? ` · cobertura nativa <b>${fmtNum(h.covNativaRelPct, 0)}%</b> · exót./ruderal <b>${fmtNum(h.covExoticaRelPct, 0)}%</b>` : ""}`; })()}</div>`
+    : `<section class="painel-erro">${barraErro(r, inv.config.erroAlvoPct)}</section>`;
+
+  app.innerHTML = `${header(rotuloFito(estrato.fitofisionomia) || "Estrato", () => telaInventario(inv.id))}
     <main>
       <div class="info">${labelEstrato(estrato)}</div>
-      <section class="painel-erro">${barraErro(r, inv.config.erroAlvoPct)}</section>
+      ${painelTopo}
       ${barraCompletude(comp)}
-      <button class="btn-grande" id="nova-parc">+ Nova parcela</button>
+      <button class="btn-grande" id="nova-parc">+ Nova parcela${herb ? " (1×1 m)" : ""}</button>
       <div class="cards">${parcelasHtml}</div>
     </main>`;
   ligarVoltar(() => telaInventario(inv.id));
@@ -423,14 +465,13 @@ async function telaParcelasDoEstrato(estratoId) {
     const p = novaParcela(estratoId, "P" + String(inv.parcelas.length + 1).padStart(2, "0"));
     inv.parcelas.push(p);
     await salvarJa();
-    telaParcela(p.id);
+    if (herb) telaParcelaHerbaceo(p.id); else telaParcela(p.id);
   };
   $$("[data-fotos-parc]").forEach((el) => { el.onclick = () => telaFotosParcela(el.dataset.fotosParc); });
-  $$("[data-parc]").forEach((el) => {
-    el.onclick = () => { if (suprimirClique) return; telaParcela(el.dataset.parc); };
-    // segurar a parcela → excluir (com as fotos de parcela dela)
-    ligarPressLongo(el, async () => {
-      const pid = el.dataset.parc;
+  $$("[data-parc]").forEach((el) => { el.onclick = () => herb ? telaParcelaHerbaceo(el.dataset.parc) : telaParcela(el.dataset.parc); });
+  $$("[data-del-parc]").forEach((el) => {
+    el.onclick = async () => {
+      const pid = el.dataset.delParc;
       const p = inv.parcelas.find((x) => x.id === pid);
       if (!p) return;
       if (!confirm(`Excluir a parcela "${p.rotulo || ""}" e suas fotos? Não dá pra desfazer.`)) return;
@@ -439,7 +480,7 @@ async function telaParcelasDoEstrato(estratoId) {
       for (const f of fts) await db.excluirFoto(f.id);
       await salvarJa();
       telaParcelasDoEstrato(estratoId);
-    });
+    };
   });
 }
 
@@ -457,6 +498,12 @@ function telaExportar(invId) {
       </div>
       <button class="btn-grande" id="prep-share">↗ Preparar p/ compartilhar (XLSX)</button>
       <div id="share-panel"></div>
+      ${temHerbaceo(inv) ? `
+      <h3 class="sec-export">Estrato herbáceo (Braun-Blanquet)</h3>
+      <div class="acoes-linha wrap">
+        <button class="btn-sec" id="exp-herb-xlsx">⬇ XLSX</button>
+        <button class="btn-sec" id="exp-herb-csv">⬇ CSV</button>
+      </div>` : ""}
 
       <h3 class="sec-export">Fotos (ZIP)</h3>
       <div class="acoes-linha wrap">
@@ -468,6 +515,10 @@ function telaExportar(invId) {
   $("#exp-json").onclick = () => exportarJSON(inv);
   $("#exp-csv").onclick = () => exportarCSV(inv);
   $("#exp-xlsx").onclick = () => exportarXLSX(inv);
+  if (temHerbaceo(inv)) {
+    $("#exp-herb-xlsx").onclick = () => exportarHerbaceoXLSX(inv);
+    $("#exp-herb-csv").onclick = () => exportarHerbaceoCSV(inv);
+  }
   $("#exp-fotos-esp2").onclick = () => exportarZipEspecies(invId);
   $("#exp-fotos-parc").onclick = () => exportarZipParcelas(invId);
   // Compartilhar em 2 passos (padrão AlpineQuest): "Preparar" MONTA o arquivo;
@@ -510,18 +561,23 @@ function telaExportar(invId) {
 // ============================================================
 function telaConfig() {
   const c = inv.config;
-  const fitoOpts = (sel) => Object.entries(EQUACOES_VOLUME)
-    .map(([k, v]) => `<option value="${k}" ${k === sel ? "selected" : ""}>${esc(v.rotulo)}</option>`).join("");
+  const fitoOpts = (sel, metodo) => Object.entries(metodo === "herbaceo" ? HERB_FITOS : EQUACOES_VOLUME)
+    .map(([k, v]) => `<option value="${k}" ${k === sel ? "selected" : ""}>${esc(typeof v === "string" ? v : v.rotulo)}</option>`).join("");
   const estagioOpts = (sel) => ['<option value="">— (sem estágio)</option>']
     .concat(ESTAGIOS.map((s) => `<option value="${s}" ${s === sel ? "selected" : ""}>${s}</option>`)).join("");
+  const metodoOpts = (sel) => [["arboreo", "Arbóreo (parcelas · CAP/altura/volume)"], ["herbaceo", "Herbáceo (1×1 m · Braun-Blanquet)"]]
+    .map(([k, t]) => `<option value="${k}" ${k === (sel || "arboreo") ? "selected" : ""}>${t}</option>`).join("");
   const estratosHtml = inv.estratos.map((e) => `<div class="estrato-edit" data-est="${e.id}">
-    <div class="estrato-titulo">${esc(rotuloEstrato(e.fitofisionomia, e.estagio))}</div>
+    <div class="estrato-titulo">${esc(rotuloFito(e.fitofisionomia))}${ehHerbaceo(e) ? " · herbáceo" : (e.estagio ? " — " + esc(e.estagio) : "")}</div>
+    <label>Método de levantamento<select class="e-metodo" data-est="${e.id}">${metodoOpts(e.metodo)}</select></label>
     <div class="linha2">
-      <label>Fitofisionomia<select class="e-fito" data-est="${e.id}">${fitoOpts(e.fitofisionomia)}</select></label>
+      <label>Fitofisionomia<select class="e-fito" data-est="${e.id}">${fitoOpts(e.fitofisionomia, e.metodo)}</select></label>
       <label>Estágio sucessional<select class="e-estagio" data-est="${e.id}">${estagioOpts(e.estagio)}</select></label>
     </div>
     <div class="linha2">
-      <label>Área total (ha)<input type="number" step="0.0001" class="e-area" data-est="${e.id}" value="${e.areaTotalHa ?? ""}"></label>
+      ${ehHerbaceo(e)
+        ? '<div class="info" style="flex:1;margin:0">Parcela <b>1×1 m</b>; cobertura por classe Braun-Blanquet. CONAMA 423 (pós-campo).</div>'
+        : `<label>Área total (ha)<input type="number" step="0.0001" class="e-area" data-est="${e.id}" value="${e.areaTotalHa ?? ""}"></label>`}
       ${inv.estratos.length > 1 ? `<button class="perigo del-est" data-est="${e.id}">🗑</button>` : ""}
     </div></div>`).join("");
 
@@ -590,13 +646,26 @@ function telaConfig() {
   const aplicaEstrato = (el, campo) => {
     const e = estPorId(el.dataset.est);
     e[campo] = el.value;
-    e.nome = rotuloEstrato(e.fitofisionomia, e.estagio);
+    e.nome = rotuloFito(e.fitofisionomia) + (ehHerbaceo(e) ? "" : (e.estagio ? " — " + e.estagio : ""));
     const t = document.querySelector(`.estrato-edit[data-est="${e.id}"] .estrato-titulo`);
     if (t) t.textContent = e.nome;
     agendarSalvar();
   };
   $$(".e-fito").forEach((el) => { el.onchange = () => aplicaEstrato(el, "fitofisionomia"); });
   $$(".e-estagio").forEach((el) => { el.onchange = () => aplicaEstrato(el, "estagio"); });
+  // trocar o método troca as fitofisionomias disponíveis → re-render do Config.
+  $$(".e-metodo").forEach((el) => {
+    el.onchange = async () => {
+      const e = estPorId(el.dataset.est);
+      e.metodo = el.value;
+      // ajusta a fitofisionomia pro novo método se a atual não existe nele
+      const validas = e.metodo === "herbaceo" ? Object.keys(HERB_FITOS) : Object.keys(EQUACOES_VOLUME);
+      if (!validas.includes(e.fitofisionomia)) e.fitofisionomia = e.metodo === "herbaceo" ? "cerrado_sr" : "mata_fes";
+      e.nome = rotuloFito(e.fitofisionomia) + (ehHerbaceo(e) ? "" : (e.estagio ? " — " + e.estagio : ""));
+      await salvarJa();
+      telaConfig();
+    };
+  });
   $$(".del-est").forEach((el) => {
     el.onclick = async () => {
       const eid = el.dataset.est;
@@ -872,6 +941,98 @@ function marcarGPS(p) {
 }
 
 // ============================================================
+// TELA — parcela HERBÁCEA (1×1 m): GPS + fotos + táxons com classe Braun-Blanquet
+// ============================================================
+function telaParcelaHerbaceo(parcelaId) {
+  const p = inv.parcelas.find((x) => x.id === parcelaId);
+  if (!p) return telaInventario(inv.id);
+  if (!p.taxons) p.taxons = [];
+  const est = estPorId(p.estratoId);
+
+  app.innerHTML = `${header("Parcela " + (p.rotulo || ""), () => telaParcelasDoEstrato(p.estratoId))}
+    <main class="form">
+      <div class="erro-estrato-box neutro" id="h-resumo"></div>
+      <label class="campo">Rótulo da parcela<input id="p-rotulo" value="${esc(p.rotulo)}"></label>
+      <div class="gps-linha">
+        <button class="btn-sec" id="p-gps">📍 Marcar GPS</button>
+        <span id="gps-info">${p.lat != null ? fmtNum(p.lat, 6) + ", " + fmtNum(p.lon, 6) : "sem coordenada"}</span>
+      </div>
+      <button class="btn-sec largo" id="p-fotos">📷 Fotos da parcela</button>
+      <h3>Cobertura — táxons <small>(escala Braun-Blanquet · ID a gênero)</small></h3>
+      <div id="taxons"></div>
+      <button class="btn-grande" id="add-tax">+ Adicionar táxon</button>
+    </main>`;
+  ligarVoltar(() => telaParcelasDoEstrato(p.estratoId));
+  $("#p-rotulo").oninput = (e) => { p.rotulo = e.target.value; agendarSalvar(); };
+  $("#p-gps").onclick = () => marcarGPS(p);
+  $("#p-fotos").onclick = () => telaFotosParcela(p.id);
+  $("#add-tax").onclick = async () => { p.taxons.push(novoTaxon("")); await salvarJa(); renderTaxons(); };
+
+  function renderResumoH() {
+    const el = $("#h-resumo");
+    if (!el) return;
+    const h = resultadosHerbaceo(inv, p.estratoId);
+    el.innerHTML = `nesta parcela: <b>${p.taxons.length}</b> táxon(s) · estrato: riqueza <b>${h.riqueza}</b> em ${h.nParcelas} parcela(s)`;
+  }
+  function renderTaxons() {
+    const box = $("#taxons");
+    if (!p.taxons.length) {
+      box.innerHTML = '<p class="vazio">Nenhum táxon. Toque em "+ Adicionar táxon".</p>';
+      renderResumoH();
+      return;
+    }
+    box.innerHTML = p.taxons.map((t, i) => `<div class="taxon-card">
+      <div class="taxon-top">
+        <div class="autocomplete">
+          <input class="t-nome" data-i="${i}" value="${esc(t.nome)}" autocomplete="off" placeholder="Gênero / espécie">
+          <button type="button" class="ac-toggle t-toggle" data-i="${i}" aria-label="Ver táxons">▾</button>
+          <div class="ac-lista t-lista" data-i="${i}" hidden></div>
+        </div>
+        <button class="btn-foto perigo-icone t-del" data-i="${i}" title="Excluir táxon">🗑</button>
+      </div>
+      <div class="taxon-linha"><span class="taxon-rot">Cobertura</span>
+        <div class="bb-opts">${BB_CLASSES.map((bb) =>
+          `<button class="bb-opt ${t.bb === bb ? "sel" : ""}" data-i="${i}" data-bb="${bb}" title="${esc(BB_DESC[bb])}">${bb}</button>`).join("")}</div>
+      </div>
+      <div class="taxon-linha"><span class="taxon-rot">Origem</span>
+        <div class="bb-opts">${ORIGENS_HERB.map((o) =>
+          `<button class="orig-opt ${t.origem === o ? "sel" : ""}" data-i="${i}" data-orig="${esc(o)}">${esc(o)}</button>`).join("")}</div>
+      </div>
+    </div>`).join("");
+    $$(".t-nome", box).forEach((el) => { el.oninput = () => { p.taxons[+el.dataset.i].nome = el.value; agendarSalvar(); }; });
+    p.taxons.forEach((t, i) => {
+      const input = box.querySelector(`.t-nome[data-i="${i}"]`);
+      const toggle = box.querySelector(`.t-toggle[data-i="${i}"]`);
+      const lista = box.querySelector(`.t-lista[data-i="${i}"]`);
+      ligarAutocomplete(input, toggle, lista, () => taxonsDoEstrato(inv, p.estratoId),
+        (nome) => { p.taxons[i].nome = nome; agendarSalvar(); });
+    });
+    // BB e origem: toggle em-lugar (preserva foco, sem re-render pesado)
+    $$(".bb-opt", box).forEach((el) => {
+      el.onclick = () => {
+        const i = +el.dataset.i;
+        p.taxons[i].bb = (p.taxons[i].bb === el.dataset.bb) ? null : el.dataset.bb;
+        box.querySelectorAll(`.bb-opt[data-i="${i}"]`).forEach((x) => x.classList.toggle("sel", x.dataset.bb === p.taxons[i].bb));
+        agendarSalvar();
+      };
+    });
+    $$(".orig-opt", box).forEach((el) => {
+      el.onclick = () => {
+        const i = +el.dataset.i;
+        p.taxons[i].origem = (p.taxons[i].origem === el.dataset.orig) ? null : el.dataset.orig;
+        box.querySelectorAll(`.orig-opt[data-i="${i}"]`).forEach((x) => x.classList.toggle("sel", x.dataset.orig === p.taxons[i].origem));
+        agendarSalvar();
+      };
+    });
+    $$(".t-del", box).forEach((el) => {
+      el.onclick = async () => { p.taxons.splice(+el.dataset.i, 1); await salvarJa(); renderTaxons(); };
+    });
+    renderResumoH();
+  }
+  renderTaxons();
+}
+
+// ============================================================
 // TELA 5 — indivíduo (placa, espécie, fustes)
 // ============================================================
 function telaIndividuo(parcelaId, individuoId) {
@@ -1089,7 +1250,10 @@ async function telaEspecies(invId) {
          <div class="card-nome"><i>${esc(nome)}</i></div>
          <div class="card-sub">${contagem[nome] || 0} foto(s)</div>
        </div>
-       <div class="card-acoes"><span class="badge ${contagem[nome] ? "ok" : ""}">${contagem[nome] ? "📷 " + contagem[nome] : "—"}</span></div>
+       <div class="card-acoes">
+         <span class="badge ${contagem[nome] ? "ok" : ""}">${contagem[nome] ? "📷 " + contagem[nome] : "—"}</span>
+         <button class="btn-foto perigo-icone" data-del-esp="${esc(nome)}" title="Excluir espécie">🗑</button>
+       </div>
      </div>`).join("")
     : '<p class="vazio">Nenhuma espécie ainda. As que você registrar nas parcelas aparecem aqui.</p>';
   app.innerHTML = `${header("Espécies", () => telaInventario(invId))}
@@ -1100,7 +1264,6 @@ async function telaEspecies(invId) {
       </div>
       <button class="btn-grande" id="add-esp">+ Adicionar espécie</button>
       <input id="busca-esp" class="busca" type="search" placeholder="🔎 Buscar espécie…" autocomplete="off">
-      <div class="info dica-press">Segure uma espécie pra excluir.</div>
       <div class="cards">${cards}</div>
       <button class="btn-sec largo" id="exp-fotos-esp">⬇ Exportar fotos das espécies (ZIP)</button>
     </main>`;
@@ -1113,11 +1276,11 @@ async function telaEspecies(invId) {
     await salvarJa();
     telaEspecies(invId);
   };
-  $$("[data-esp]").forEach((el) => {
-    el.onclick = () => { if (suprimirClique) return; telaEspecie(invId, el.dataset.esp); };
-    // segurar a espécie → excluir (bloqueia se há indivíduos usando o nome)
-    ligarPressLongo(el, async () => {
-      const nome = el.dataset.esp;
+  $$("[data-esp]").forEach((el) => { el.onclick = () => telaEspecie(invId, el.dataset.esp); });
+  $$("[data-del-esp]").forEach((el) => {
+    el.onclick = async (ev) => {
+      ev.stopPropagation(); // não abrir a espécie ao tocar o 🗑
+      const nome = el.dataset.delEsp;
       let usados = 0;
       for (const p of inv.parcelas) usados += p.individuos.filter((ind) => (ind.especie || "").trim() === nome).length;
       if (usados) { alert(`"${nome}" está em ${usados} indivíduo(s). Renomeie ou exclua esses indivíduos primeiro.`); return; }
@@ -1127,7 +1290,7 @@ async function telaEspecies(invId) {
       for (const f of fts) await db.excluirFoto(f.id);
       await salvarJa();
       telaEspecies(invId);
-    });
+    };
   });
   const buscaEl = $("#busca-esp");
   buscaEl.oninput = () => {
@@ -1159,26 +1322,15 @@ async function telaEspecie(invId, nome) {
     const n = p.individuos.filter((ind) => (ind.especie || "").trim() === nome).length;
     if (n) ocorre.push(`${rotulo[p.id]} (${n})`);
   }
-  // duas lentes sobre as mesmas fotos: por parcela (padrão) ou por categoria (toggle).
-  const porCat = espCatAtivo();
-  let pastasHtml;
-  if (porCat) {
-    const mapCat = {};
-    for (const f of fotos) { const k = f.categoria || "Geral"; (mapCat[k] = mapCat[k] || []).push(f); }
-    pastasHtml = CATEGORIAS_ESP.map((cat) =>
-      `<div class="card" data-cat="${esc(cat)}"><div class="card-corpo">
-         <div class="card-nome">📁 ${esc(cat)}</div>
-         <div class="card-sub">${(mapCat[cat] || []).length} foto(s)</div></div></div>`).join("");
-  } else {
-    const porParc = {};
-    for (const f of fotos) { const k = f.parcelaId || ""; (porParc[k] = porParc[k] || []).push(f); }
-    const chaves = Object.keys(porParc).sort();
-    pastasHtml = chaves.length ? chaves.map((k) =>
-      `<div class="card" data-pasta="${esc(k)}"><div class="card-corpo">
-         <div class="card-nome">📁 ${k ? esc(rotulo[k] || k) : "Sem parcela (avulsa)"}</div>
-         <div class="card-sub">${porParc[k].length} foto(s)</div></div></div>`).join("")
-      : '<p class="vazio">Nenhuma foto. Toque em "Tirar foto" ou use o 📷 ao registrar o indivíduo.</p>';
-  }
+  // pastas de fotos por parcela ("" = avulsa, fora de parcela)
+  const porParc = {};
+  for (const f of fotos) { const k = f.parcelaId || ""; (porParc[k] = porParc[k] || []).push(f); }
+  const chaves = Object.keys(porParc).sort();
+  const pastasHtml = chaves.length ? chaves.map((k) =>
+    `<div class="card" data-pasta="${esc(k)}"><div class="card-corpo">
+       <div class="card-nome">📁 ${k ? esc(rotulo[k] || k) : "Sem parcela (avulsa)"}</div>
+       <div class="card-sub">${porParc[k].length} foto(s)</div></div></div>`).join("")
+    : '<p class="vazio">Nenhuma foto. Toque em "Tirar foto" ou use o 📷 ao registrar o indivíduo.</p>';
   app.innerHTML = `${header("Espécie", () => telaEspecies(invId))}
     <main class="form">
       <label class="campo">Nome da espécie <small>(editar renomeia no inventário todo)</small>
@@ -1187,18 +1339,10 @@ async function telaEspecie(invId, nome) {
         ? "Ocorre em: <b>" + esc(ocorre.join(", ")) + "</b>"
         : "Espécie avulsa — não registrada em parcelas (ex.: herbácea / fora das parcelas)."}</div>
       <button class="btn-grande" id="esp-foto">📷 Tirar foto avulsa</button>
-      <div class="sec-fotos-head">
-        <h3>${porCat ? "Fotos por categoria" : "Fotos por parcela"}</h3>
-        <button class="btn-icone-disc" id="toggle-cat" title="${porCat ? "Ver por parcela" : "Ver por categoria"}">${porCat ? "🏷️" : "📁"}</button>
-      </div>
+      <h3>Fotos por parcela</h3>
       <div class="cards">${pastasHtml}</div>
     </main>`;
   ligarVoltar(() => telaEspecies(invId));
-  $("#toggle-cat").onclick = () => {
-    localStorage.setItem("aflora-esp-cat", porCat ? "0" : "1");
-    telaEspecie(invId, nomeAtual);
-  };
-  $$("[data-cat]").forEach((el) => { el.onclick = () => telaEspecieFotosCat(invId, nomeAtual, el.dataset.cat); });
   $("#esp-nome").onchange = async (e) => {
     const novo = e.target.value.trim();
     if (!novo || novo === nomeAtual) return;
@@ -1215,7 +1359,9 @@ async function telaEspecie(invId, nome) {
   $$("[data-pasta]").forEach((el) => { el.onclick = () => telaEspecieFotos(invId, nomeAtual, el.dataset.pasta); });
 }
 
-// TELA — fotos de uma espécie dentro de uma parcela (ou avulsa)
+// TELA — fotos de uma espécie dentro de uma parcela (ou avulsa). Botão 📁 ativa
+// as subpastas por categoria (Geral/Material Vegetativo/Tronco/Material Reprodutivo)
+// AQUI DENTRO da parcela — togglável, persiste em localStorage.
 async function telaEspecieFotos(invId, nome, parcelaKey) {
   inv = await db.obterInventario(invId);
   if (!inv) return telaInventarios();
@@ -1225,39 +1371,51 @@ async function telaEspecieFotos(invId, nome, parcelaKey) {
   const titulo = parcelaKey ? (rotulo[parcelaKey] || parcelaKey) : "Sem parcela";
   const fotos = (await db.fotosDoInventario(invId))
     .filter((f) => f.tipo === "especie" && f.refKey === nome && (f.parcelaId || "") === parcelaKey);
+  const porCat = espCatAtivo();
+
+  let corpo;
+  if (porCat) {
+    // subpastas por categoria, no padrão das fotos de parcela (seção + 📷 + galeria)
+    corpo = CATEGORIAS_ESP.map((cat) => {
+      const fc = fotos.filter((f) => (f.categoria || "Geral") === cat);
+      return `<div class="cat-sec">
+        <div class="cat-head"><b>${cat}</b><button class="btn-foto" data-cat="${esc(cat)}" title="Foto em ${esc(cat)}">📷</button></div>
+        ${fc.length ? galeriaHTML(fc) : '<p class="vazio-min">— sem fotos</p>'}
+      </div>`;
+    }).join("");
+  } else {
+    corpo = `<button class="btn-grande" id="ef-foto">📷 Tirar foto aqui</button>
+      <div id="ef-galeria">${galeriaHTML(fotos)}</div>`;
+  }
+
   app.innerHTML = `${header(titulo, () => telaEspecie(invId, nome))}
     <main>
-      <div class="info"><i>${esc(nome)}</i> · ${esc(titulo)}</div>
-      <button class="btn-grande" id="ef-foto">📷 Tirar foto aqui</button>
-      <div id="ef-galeria">${galeriaHTML(fotos)}</div>
+      <div class="sec-fotos-head">
+        <div class="info" style="flex:1;margin:0"><i>${esc(nome)}</i> · ${esc(titulo)}</div>
+        <button class="btn-icone-disc" id="toggle-cat" title="${porCat ? "Ver tudo junto" : "Separar por categoria (Geral/Vegetativo/Tronco/Reprodutivo)"}">${porCat ? "🗂️" : "📁"}</button>
+      </div>
+      ${corpo}
     </main>`;
   ligarVoltar(() => telaEspecie(invId, nome));
-  $("#ef-foto").onclick = async () => {
-    const foto = await capturarFoto(invId, "especie", nome, { parcelaId: parcelaKey });
-    if (foto) telaEspecieFotos(invId, nome, parcelaKey);
+  $("#toggle-cat").onclick = () => {
+    localStorage.setItem("aflora-esp-cat", porCat ? "0" : "1");
+    telaEspecieFotos(invId, nome, parcelaKey);
   };
-  ligarDelFoto("#ef-galeria", () => telaEspecieFotos(invId, nome, parcelaKey));
-}
-
-// TELA — fotos de uma espécie numa CATEGORIA (Geral/Material Vegetativo/Tronco/Material Reprodutivo)
-async function telaEspecieFotosCat(invId, nome, categoria) {
-  inv = await db.obterInventario(invId);
-  if (!inv) return telaInventarios();
-  revogarUrls();
-  const fotos = (await db.fotosDoInventario(invId))
-    .filter((f) => f.tipo === "especie" && f.refKey === nome && (f.categoria || "Geral") === categoria);
-  app.innerHTML = `${header(categoria, () => telaEspecie(invId, nome))}
-    <main>
-      <div class="info"><i>${esc(nome)}</i> · ${esc(categoria)}</div>
-      <button class="btn-grande" id="efc-foto">📷 Tirar foto aqui</button>
-      <div id="efc-galeria">${galeriaHTML(fotos)}</div>
-    </main>`;
-  ligarVoltar(() => telaEspecie(invId, nome));
-  $("#efc-foto").onclick = async () => {
-    const foto = await capturarFoto(invId, "especie", nome, { parcelaId: "", categoria });
-    if (foto) { adicionarEspecie(inv, nome); await salvarJa(); telaEspecieFotosCat(invId, nome, categoria); }
-  };
-  ligarDelFoto("#efc-galeria", () => telaEspecieFotosCat(invId, nome, categoria));
+  if (porCat) {
+    $$("[data-cat]").forEach((el) => {
+      el.onclick = async () => {
+        const foto = await capturarFoto(invId, "especie", nome, { parcelaId: parcelaKey, categoria: el.dataset.cat });
+        if (foto) telaEspecieFotos(invId, nome, parcelaKey);
+      };
+    });
+    ligarDelFoto("main", () => telaEspecieFotos(invId, nome, parcelaKey));
+  } else {
+    $("#ef-foto").onclick = async () => {
+      const foto = await capturarFoto(invId, "especie", nome, { parcelaId: parcelaKey });
+      if (foto) telaEspecieFotos(invId, nome, parcelaKey);
+    };
+    ligarDelFoto("#ef-galeria", () => telaEspecieFotos(invId, nome, parcelaKey));
+  }
 }
 
 // TELA — fotos de uma parcela por categoria (Geral/Serrapilheira/Dossel/Sub-bosque)

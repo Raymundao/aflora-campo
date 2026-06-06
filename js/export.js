@@ -1,6 +1,7 @@
 // Export do inventário: XLSX (planilha, números reais), CSV (schema sinaflor),
 // JSON (backup reimportável). Baixar ou compartilhar (WhatsApp/email via Web Share).
 import { volumeIndividuo, dapDeCap } from "./calculos.js";
+import { BB_MIDPOINT } from "./modelo.js";
 import { gerarXlsx } from "./xlsx.js";
 
 export function inventarioParaJSON(inv) {
@@ -69,6 +70,54 @@ export function inventarioParaCSV(inv) {
   return linhas.join("\r\n");
 }
 
+// ---------- estrato herbáceo (Braun-Blanquet / CONAMA 423) ----------
+// 1 linha por (parcela, táxon). Ruderal vira flag separada (origem fica p/ definir
+// pós-campo via REFLORA — padrão Diego: origem só Nativa/Exótica).
+const COLUNAS_HERB = ["estrato", "fitofisionomia", "parcela", "lat", "lon", "taxon", "classe_bb", "cobertura_pct", "origem", "ruderal"];
+
+export function temHerbaceo(inv) {
+  return (inv.estratos || []).some((e) => e.metodo === "herbaceo");
+}
+
+export function inventarioHerbaceoParaMatriz(inv) {
+  const linhas = [COLUNAS_HERB.slice()];
+  const estPorId = Object.fromEntries(inv.estratos.map((e) => [e.id, e]));
+  for (const p of inv.parcelas) {
+    const est = estPorId[p.estratoId] || {};
+    if (est.metodo !== "herbaceo") continue;
+    for (const t of (p.taxons || [])) {
+      if (!(t.nome || "").trim()) continue;
+      const origem = t.origem === "Ruderal" ? "" : (t.origem || "");
+      const ruderal = t.origem === "Ruderal" ? "sim" : "";
+      const cob = (t.bb && BB_MIDPOINT[t.bb] != null) ? BB_MIDPOINT[t.bb] : "";
+      linhas.push([est.nome || "", est.fitofisionomia || "", p.rotulo || "", p.lat ?? "", p.lon ?? "",
+        t.nome, t.bb || "", cob, origem, ruderal]);
+    }
+  }
+  return linhas;
+}
+
+export function inventarioHerbaceoParaCSV(inv) {
+  const linhas = [COLUNAS_HERB.join(";")];
+  const estPorId = Object.fromEntries(inv.estratos.map((e) => [e.id, e]));
+  for (const p of inv.parcelas) {
+    const est = estPorId[p.estratoId] || {};
+    if (est.metodo !== "herbaceo") continue;
+    for (const t of (p.taxons || [])) {
+      if (!(t.nome || "").trim()) continue;
+      const origem = t.origem === "Ruderal" ? "" : (t.origem || "");
+      const ruderal = t.origem === "Ruderal" ? "sim" : "";
+      const cob = (t.bb && BB_MIDPOINT[t.bb] != null) ? String(BB_MIDPOINT[t.bb]).replace(".", ",") : "";
+      linhas.push([
+        (est.nome || "").replaceAll(";", ","), (est.fitofisionomia || "").replaceAll(";", ","),
+        (p.rotulo || "").replaceAll(";", ","), p.lat ?? "", p.lon ?? "",
+        (t.nome || "").replaceAll(";", ","), t.bb || "", cob, origem, ruderal,
+      ].join(";"));
+    }
+  }
+  return linhas.join("\r\n");
+}
+
 const MIME = {
   xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   csv: "text/csv",
@@ -122,6 +171,10 @@ export function prepararXLSX(inv) {
 export function exportarJSON(inv) { baixar(`${slug(inv.nome)}.json`, inventarioParaJSON(inv), MIME.json); }
 export function exportarCSV(inv) { baixar(`${slug(inv.nome)}.csv`, inventarioParaCSV(inv), MIME.csv); }
 export function exportarXLSX(inv) { baixar(`${slug(inv.nome)}.xlsx`, blobXLSX(inv), MIME.xlsx); }
+
+const blobHerbXLSX = (inv) => gerarXlsx(inventarioHerbaceoParaMatriz(inv), "Herbaceo");
+export function exportarHerbaceoXLSX(inv) { baixar(`${slug(inv.nome)}_herbaceo.xlsx`, blobHerbXLSX(inv), MIME.xlsx); }
+export function exportarHerbaceoCSV(inv) { baixar(`${slug(inv.nome)}_herbaceo.csv`, inventarioHerbaceoParaCSV(inv), MIME.csv); }
 
 // Compartilha o XLSX; se não suportado, baixa. Retorna { ok, motivo }.
 export async function compartilharXLSX(inv) {

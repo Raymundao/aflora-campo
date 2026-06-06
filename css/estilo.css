@@ -84,6 +84,7 @@ button { font: inherit; cursor: pointer; border-radius: var(--r); }
 /* 4) ícone (quadrado) */
 .btn-foto { background: var(--card); border: 2px solid var(--borda); color: var(--texto);
   min-width: var(--toque); min-height: var(--toque); font-size: 18px; border-radius: var(--r); }
+.btn-foto.perigo-icone { border-color: var(--erro-fg); color: var(--erro-fg); }
 .btn-foto-mini { background: var(--card); border: 2px dashed var(--verde-claro); color: var(--verde);
   min-height: 44px; padding: 8px var(--e2); font-size: var(--fs-leg); border-radius: var(--r-sm); width: 100%; margin-bottom: var(--e1); font-weight: 600; }
 .link-update { background: none; border: 0; color: var(--verde-claro); font-size: var(--fs-leg); text-decoration: underline; padding: 6px; }
@@ -242,6 +243,23 @@ input:focus, select:focus, textarea:focus { outline: 3px solid var(--verde-claro
 .foto-del { position: absolute; top: 4px; right: 4px; background: var(--erro-fg); color: #fff;
   border: 0; width: 28px; height: 28px; border-radius: 50%; font-size: 14px; line-height: 1; }
 .cat-sec, .conama-param { background: var(--card); border: 1.5px solid var(--borda); border-radius: var(--r); padding: var(--e2) var(--e3); margin-bottom: var(--e1); }
+
+/* ---------- estrato herbáceo (Braun-Blanquet) ---------- */
+.tag-herb { background: #DCEDC8; color: #33691E; }
+.taxon-card { background: var(--card); border: 1.5px solid var(--borda); border-radius: var(--r);
+  padding: var(--e2) var(--e3); margin-bottom: var(--e1); box-shadow: var(--sombra); }
+.taxon-top { display: flex; align-items: stretch; gap: var(--e1); }
+.taxon-top .autocomplete { flex: 1; }
+.taxon-top .t-del { flex: 0 0 auto; min-width: 44px; }
+.taxon-linha { display: flex; align-items: center; gap: var(--e2); margin-top: var(--e1); flex-wrap: wrap; }
+.taxon-rot { font-size: var(--fs-leg); color: var(--texto-fraco); font-weight: 600; flex: 0 0 70px; }
+.bb-opts { display: flex; gap: 5px; flex-wrap: wrap; flex: 1; }
+.bb-opt { min-width: 40px; min-height: 44px; background: var(--card); border: 2px solid var(--borda);
+  border-radius: var(--r-sm); color: var(--texto); font-weight: 700; font-size: var(--fs-corpo); padding: 6px; }
+.bb-opt.sel { border-color: var(--verde); background: var(--ok-bg); color: var(--ok-fg); }
+.orig-opt { flex: 1; min-width: 80px; min-height: 44px; background: var(--card); border: 2px solid var(--borda);
+  border-radius: var(--r-sm); color: var(--texto); font-weight: 700; font-size: var(--fs-leg); padding: 6px 8px; }
+.orig-opt.sel { border-color: var(--verde); background: var(--ok-bg); color: var(--ok-fg); }
 
 /* ---------- CONAMA ---------- */
 .conama-opts { display: flex; gap: var(--e1); flex-wrap: wrap; }
