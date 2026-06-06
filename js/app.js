@@ -24,7 +24,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v46"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v47"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -1785,6 +1785,28 @@ async function telaCenso(estratoId, modo = "censo") {
     </div>`;
 
   const L = window.L;
+  // pontos do censo em CANVAS (não DOM) — aguenta milhares sem travar, igual AlpineQuest.
+  // 1 renderer canvas pra todos; classe que desenha o círculo + a placa no próprio canvas.
+  const rendererPontos = L.canvas({ padding: 0.5 });
+  if (!telaCenso._PontoLabel) {
+    telaCenso._PontoLabel = L.CircleMarker.extend({
+      _updatePath() {
+        L.CircleMarker.prototype._updatePath.call(this); // desenha o círculo
+        const ctx = this._renderer && this._renderer._ctx;
+        const m = this._map;
+        if (!ctx || !this._point || !this.options.label) return;
+        if (m && m.getZoom() < 16) return; // só mostra a placa com zoom razoável (menos poluição/custo)
+        const x = this._point.x, y = this._point.y;
+        ctx.save();
+        ctx.font = "bold 11px system-ui, sans-serif";
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.lineWidth = 3; ctx.strokeStyle = "rgba(0,0,0,.75)";
+        ctx.strokeText(this.options.label, x, y);
+        ctx.fillStyle = "#fff"; ctx.fillText(this.options.label, x, y);
+        ctx.restore();
+      },
+    });
+  }
   let centro = [-19.65, -43.9];
   // centro inicial: último ponto do censo, ou 1º vértice de uma fito/referência
   const comCoord = (est?.pontos || []).filter((p) => p.lat != null);
@@ -1899,13 +1921,15 @@ async function telaCenso(estratoId, modo = "censo") {
     renderPontos._layer = null;
     if (!est) return; // modo fitos não tem pontos
     const grupo = L.layerGroup();
+    const Ponto = telaCenso._PontoLabel;
     est.pontos.forEach((pt, i) => {
       if (pt.lat == null) return;
-      const ic = L.divIcon({ className: "marcador-ponto", html: `<div class="pin-ponto">${esc(pt.placa || (i + 1))}</div>`, iconSize: [30, 30] });
-      const m = L.marker([pt.lat, pt.lon], { icon: ic, draggable: true });
+      const m = new Ponto([pt.lat, pt.lon], {
+        renderer: rendererPontos, radius: 9,
+        color: "#fff", weight: 2, fillColor: "#1B5E20", fillOpacity: 1,
+        label: String(pt.placa || (i + 1)),
+      });
       m.on("click", () => abrirFormPonto(pt, false));
-      // arrastar o pino reposiciona o ponto
-      m.on("dragend", async () => { const ll = m.getLatLng(); pt.lat = ll.lat; pt.lon = ll.lng; await salvarJa(); });
       grupo.addLayer(m);
     });
     grupo.addTo(map);
