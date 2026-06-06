@@ -263,6 +263,7 @@ input:focus, select:focus, textarea:focus { outline: 3px solid var(--verde-claro
 .sel-btn .seta { color: var(--verde); font-weight: 700; }
 .sel-btn.ok { border-color: var(--verde-claro); }
 .sel-opts { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 5px; }
+.sel-opts[hidden] { display: none; }   /* o atributo hidden precisa vencer o display:flex */
 /* opções de cobertura abertas — classe + faixa (legenda no próprio botão) */
 .bb-opt-full { flex: 1 1 46%; min-height: 50px; background: var(--card); border: 2px solid var(--borda);
   border-radius: var(--r-sm); padding: 6px 8px; display: flex; flex-direction: column; gap: 1px; text-align: left; }

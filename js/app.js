@@ -19,7 +19,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v32"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v33"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
