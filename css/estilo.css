@@ -293,7 +293,9 @@ input:focus, select:focus, textarea:focus { outline: 3px solid var(--verde-claro
 
 /* ---------- CENSO (mapa Leaflet estilo AlpineQuest, tela cheia) ---------- */
 .censo-tela { position: fixed; inset: 0; z-index: 1000; background: #000; }
-#mapa { position: absolute; inset: 0; width: 100%; height: 100%; background: #ddd; z-index: 0; }
+/* fundo escuro: tile faltando/carregando aparece escuro, não branco gritante */
+#mapa, .leaflet-container { position: absolute; inset: 0; width: 100%; height: 100%; background: #25302a; z-index: 0; }
+.leaflet-tile-container { background: #25302a; }
 /* bolinha central (a mira/ponta da linha) — pequena e redonda, não cruz */
 .censo-dot { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 600;
   width: 13px; height: 13px; border-radius: 50%; background: #1565C0; border: 2px solid #fff;
@@ -339,8 +341,12 @@ input:focus, select:focus, textarea:focus { outline: 3px solid var(--verde-claro
   background: var(--bg); border-radius: var(--r) var(--r) 0 0; box-shadow: 0 -3px 16px rgba(0,0,0,.45);
   padding-bottom: max(8px, env(safe-area-inset-bottom)); }
 .censo-sheet:empty { display: none; }
-/* marcador da minha posição (ponto azul) */
-.marcador-eu .dot-eu { width: 18px; height: 18px; border-radius: 50%; background: #1565C0; border: 3px solid #fff; box-shadow: 0 0 0 2px #1565C0, 0 1px 4px rgba(0,0,0,.5); }
+/* marcador da minha posição (ponto azul + cone de direção quando bússola on) */
+.marcador-eu { position: relative; }
+.marcador-eu .dot-eu { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%);
+  width: 18px; height: 18px; border-radius: 50%; background: #1565C0; border: 3px solid #fff; box-shadow: 0 0 0 2px #1565C0, 0 1px 4px rgba(0,0,0,.5); }
+.marcador-eu .cone-eu { position: absolute; left: 50%; bottom: 50%; transform-origin: 50% 100%; transform: translateX(-50%);
+  width: 0; height: 0; border-left: 9px solid transparent; border-right: 9px solid transparent; border-bottom: 24px solid rgba(21,101,192,.4); }
 /* pin de cada ponto do censo */
 .marcador-ponto .pin-ponto { min-width: 26px; height: 26px; padding: 0 5px; border-radius: var(--r-pill);
   background: var(--verde); color: #fff; border: 2px solid #fff; display: flex; align-items: center; justify-content: center;

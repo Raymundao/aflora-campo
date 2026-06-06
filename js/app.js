@@ -23,7 +23,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v38"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v39"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -1678,12 +1678,15 @@ async function telaCenso(estratoId) {
       <div class="bussola" id="bussola" hidden><div class="bussola-rosa" id="bussola-rosa"><span class="bussola-n">N</span></div><span class="bussola-deg" id="bussola-deg">—</span></div>
       <div class="trk-banner" id="trk-banner" hidden></div>
       <div class="censo-fabs">
+        <button class="censo-fab" id="censo-lista" title="Lista de pontos">📋</button>
         <button class="censo-fab" id="censo-centrar" title="Centralizar em mim">🎯</button>
         <button class="censo-fab" id="censo-bussola" title="Bússola">🧭</button>
         <button class="censo-fab" id="censo-trilha" title="Gravar trilha">🛤️</button>
         <button class="censo-fab" id="censo-desenho" title="Desenhar polígono">✏️</button>
+        <button class="censo-fab" id="censo-importar" title="Importar KML (ADA…)">📂</button>
         <button class="censo-fab" id="censo-baixar" title="Baixar área offline">⬇</button>
       </div>
+      <input type="file" id="kml-file" accept=".kml,application/vnd.google-earth.kml+xml" hidden>
       <button class="btn-grande destaque censo-add-fixo" id="censo-add">+ Ponto</button>
       <div class="censo-barra" id="censo-barra" hidden></div>
       <div class="censo-sheet" id="censo-painel"></div>
@@ -1700,8 +1703,16 @@ async function telaCenso(estratoId) {
   // tileTemplate guarda a URL da camada ativa pro pré-download de área.
   let tileTemplate = CAMADAS_SAT[0].url;
   const baseLayers = {};
+  // tile transparente p/ falhas (offline sem cache) — em vez de quadrado branco/ícone quebrado
+  const TILE_ERRO = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
   CAMADAS_SAT.forEach((c, i) => {
-    const layer = L.tileLayer(c.url, { maxZoom: 21, maxNativeZoom: c.maxNativeZoom });
+    const layer = L.tileLayer(c.url, {
+      maxZoom: 21, maxNativeZoom: c.maxNativeZoom,
+      keepBuffer: 6,            // mantém mais tiles ao redor → menos borda branca no pan
+      updateWhenZooming: false, // não recarrega no meio do zoom (evita pisca)
+      updateWhenIdle: true,     // só busca novos tiles quando para de mexer
+      errorTileUrl: TILE_ERRO,  // falha offline = transparente (fundo escuro), não branco
+    });
     baseLayers[c.nome] = layer;
     if (i === 0) layer.addTo(map);
   });
@@ -1713,7 +1724,7 @@ async function telaCenso(estratoId) {
   setTimeout(() => map.invalidateSize(), 120); // o container acabou de entrar no DOM
 
   let userLatLng = null, userAlt = null, userAcc = null, userMarker = null, linha = null;
-  const iconeEu = L.divIcon({ className: "marcador-eu", html: '<div class="dot-eu"></div>', iconSize: [22, 22] });
+  const iconeEu = L.divIcon({ className: "marcador-eu", html: '<div class="cone-eu" hidden></div><div class="dot-eu"></div>', iconSize: [22, 22] });
 
   // linha fina da minha posição até a mira (bolinha central no DOM) + label na linha
   function atualizarLeitura() {
@@ -1723,7 +1734,7 @@ async function telaCenso(estratoId) {
     if (userLatLng) {
       const d = distanciaM(userLatLng, c);
       lbl.hidden = false;
-      lbl.innerHTML = `<b>${fmtNum(d, 0)} m</b>${userAlt != null ? `<span>↑${fmtNum(userAlt, 0)} m</span>` : ""}`;
+      lbl.innerHTML = `<b>${fmtNum(d, 0)} m</b>`;
       if (!linha) linha = L.polyline([userLatLng, c], { color: "#1565C0", weight: 1.6, opacity: 0.85, dashArray: null }).addTo(map);
       else linha.setLatLngs([userLatLng, c]);
     } else {
@@ -1790,8 +1801,10 @@ async function telaCenso(estratoId) {
     est.pontos.forEach((pt, i) => {
       if (pt.lat == null) return;
       const ic = L.divIcon({ className: "marcador-ponto", html: `<div class="pin-ponto">${esc(pt.placa || (i + 1))}</div>`, iconSize: [30, 30] });
-      const m = L.marker([pt.lat, pt.lon], { icon: ic });
+      const m = L.marker([pt.lat, pt.lon], { icon: ic, draggable: true });
       m.on("click", () => abrirFormPonto(pt, false));
+      // arrastar o pino reposiciona o ponto
+      m.on("dragend", async () => { const ll = m.getLatLng(); pt.lat = ll.lat; pt.lon = ll.lng; await salvarJa(); });
       grupo.addLayer(m);
     });
     grupo.addTo(map);
@@ -1843,6 +1856,11 @@ async function telaCenso(estratoId) {
     const rosa = $("#bussola-rosa"), deg = $("#bussola-deg");
     if (rosa) rosa.style.transform = `rotate(${-h}deg)`;
     if (deg) deg.textContent = `${fmtNum(h, 0)}°`;
+    // cone de direção no ponto azul (mostra pra onde estou virado)
+    if (userMarker && userMarker._icon) {
+      const cone = userMarker._icon.querySelector(".cone-eu");
+      if (cone) { cone.hidden = false; cone.style.transform = `translateX(-50%) rotate(${h}deg)`; }
+    }
   }
   $("#censo-bussola").onclick = async () => {
     bussolaOn = !bussolaOn;
@@ -1969,6 +1987,101 @@ async function telaCenso(estratoId) {
     $("#d-cancel").onclick = () => { barra.hidden = true; barra.innerHTML = ""; mostrarAdd(true); };
   };
 
+  // ----- lista de pontos (ordenável) -----
+  function pontosOrdenados(modo) {
+    const base = est.pontos.map((pt, i) => ({ pt, entrada: i }));
+    if (modo === "placa") {
+      base.sort((a, b) => {
+        const pa = (a.pt.placa || "").trim(), pb = (b.pt.placa || "").trim();
+        if (!pa) return pb ? 1 : a.entrada - b.entrada;
+        if (!pb) return -1;
+        return pa.localeCompare(pb, "pt-BR", { numeric: true });
+      });
+    } else if (modo === "especie") {
+      base.sort((a, b) => (a.pt.especie || "~").localeCompare(b.pt.especie || "~", "pt-BR") || a.entrada - b.entrada);
+    }
+    return base;
+  }
+  function abrirLista() {
+    const painel = $("#censo-painel"); mostrarAdd(false);
+    const modo = localStorage.getItem("aflora-censo-ord") || "entrada";
+    const modos = [["entrada", "Ordem de entrada"], ["placa", "Placa"], ["especie", "Espécie"]];
+    const ordOpts = modos.map(([v, t]) => `<option value="${v}" ${v === modo ? "selected" : ""}>${t}</option>`).join("");
+    const itens = pontosOrdenados(modo).map(({ pt, entrada }) => {
+      const vi = volumeIndividuo(pt.fustes, est.fitofisionomia);
+      return `<div class="card" data-pt="${pt.id}"><div class="card-corpo">
+        <div class="card-nome">#${esc(pt.placa || (entrada + 1))} <i>${esc(pt.especie || "—")}</i></div>
+        <div class="card-sub">${pt.fustes.length} fuste(s) · ${fmtNum(vi.vol_aereo, 4)} m³${pt.lat != null ? " · 📍" : " · sem coord"}</div>
+      </div></div>`;
+    }).join("") || '<p class="vazio">Nenhum ponto ainda.</p>';
+    painel.innerHTML = `<div class="censo-form">
+      <div class="censo-form-top"><b>Pontos (${est.pontos.length})</b>
+        <label class="ord-mini" style="flex:1">Organizar <select id="lst-ord">${ordOpts}</select></label>
+        <button class="btn-foto" id="lst-fechar">✕</button></div>
+      <div class="cards">${itens}</div></div>`;
+    $("#lst-ord").onchange = (e) => { localStorage.setItem("aflora-censo-ord", e.target.value); abrirLista(); };
+    $("#lst-fechar").onclick = () => { painel.innerHTML = ""; mostrarAdd(true); };
+    $$("[data-pt]").forEach((el) => {
+      el.onclick = () => {
+        const pt = est.pontos.find((x) => x.id === el.dataset.pt);
+        if (!pt) return;
+        if (pt.lat != null) map.setView([pt.lat, pt.lon], Math.max(map.getZoom(), 18));
+        abrirFormPonto(pt, false);
+      };
+    });
+  }
+  $("#censo-lista").onclick = abrirLista;
+
+  // ----- importar KML (referência: ADA, talhões…) -----
+  est.referencias = est.referencias || [];
+  function parseKML(txt) {
+    const doc = new DOMParser().parseFromString(txt, "application/xml");
+    const out = [];
+    const coordsDe = (pm, tag) => {
+      const el = pm.getElementsByTagName(tag)[0]; if (!el) return null;
+      const c = (el.getElementsByTagName("coordinates")[0]?.textContent || "").trim();
+      if (!c) return null;
+      return c.split(/\s+/).map((p) => { const [lo, la] = p.split(",").map(Number); return [la, lo]; })
+        .filter(([la, lo]) => Number.isFinite(la) && Number.isFinite(lo));
+    };
+    for (const pm of doc.getElementsByTagName("Placemark")) {
+      const nome = (pm.getElementsByTagName("name")[0]?.textContent || "").trim();
+      if (pm.getElementsByTagName("Polygon")[0]) { const co = coordsDe(pm, "Polygon"); if (co && co.length >= 3) out.push({ nome, tipo: "poligono", coords: co }); }
+      else if (pm.getElementsByTagName("LineString")[0]) { const co = coordsDe(pm, "LineString"); if (co && co.length >= 2) out.push({ nome, tipo: "linha", coords: co }); }
+      else if (pm.getElementsByTagName("Point")[0]) { const co = coordsDe(pm, "Point"); if (co && co.length >= 1) out.push({ nome, tipo: "ponto", coords: co }); }
+    }
+    return out;
+  }
+  function renderReferencias() {
+    if (renderReferencias._l) renderReferencias._l.remove();
+    const g = L.layerGroup();
+    for (const r of est.referencias) {
+      let lay;
+      if (r.tipo === "poligono") lay = L.polygon(r.coords, { color: "#00BCD4", weight: 2, fill: false, dashArray: "6,4" });
+      else if (r.tipo === "linha") lay = L.polyline(r.coords, { color: "#00BCD4", weight: 2, dashArray: "6,4" });
+      else lay = L.circleMarker(r.coords[0], { radius: 5, color: "#00BCD4" });
+      if (r.nome) lay.bindTooltip(r.nome);
+      lay.on("click", async () => { if (confirm(`Remover a referência "${r.nome || r.tipo}"?`)) { est.referencias = est.referencias.filter((x) => x !== r); await salvarJa(); renderReferencias(); } });
+      lay.addTo(g);
+    }
+    g.addTo(map); renderReferencias._l = g;
+  }
+  renderReferencias();
+  $("#censo-importar").onclick = () => $("#kml-file").click();
+  $("#kml-file").onchange = async (e) => {
+    const file = e.target.files && e.target.files[0]; if (!file) return;
+    try {
+      const geoms = parseKML(await file.text());
+      if (!geoms.length) { alert("Não achei geometrias (polígono/linha/ponto) nesse KML."); e.target.value = ""; return; }
+      est.referencias.push(...geoms.map((g) => ({ ...g, fonte: file.name })));
+      await salvarJa(); renderReferencias();
+      const first = geoms.find((g) => g.coords.length > 1);
+      if (first) map.fitBounds(L.latLngBounds(first.coords));
+      alert(`Importado: ${geoms.length} feição(ões) de ${file.name}. Toque numa referência pra remover.`);
+    } catch (err) { alert("Erro ao ler KML: " + (err?.message || err)); }
+    e.target.value = "";
+  };
+
   // form do ponto: sobe num painel (sheet) sobre o rodapé do mapa — não sai da tela
   function abrirFormPonto(pt, ehNovo) {
     const painel = $("#censo-painel");
@@ -1992,6 +2105,7 @@ async function telaCenso(estratoId) {
           <button type="button" class="ac-toggle" id="cf-esp-toggle">▾</button>
           <div class="ac-lista" id="cf-esp-lista" hidden></div>
         </div></label>
+      <button class="btn-sec largo" id="cf-mover">📍 Mover ponto pra mira do mapa</button>
       <h3>Fustes <small>(CAP cm · altura m)</small></h3>
       <div id="cf-fustes">${fustesHtml()}</div>
       <button class="btn-sec" id="cf-addfuste">+ Fuste</button>
@@ -2011,6 +2125,13 @@ async function telaCenso(estratoId) {
     $("#cf-especie").oninput = (e) => setEsp(e.target.value);
     ligarAutocomplete($("#cf-especie"), $("#cf-esp-toggle"), $("#cf-esp-lista"), () => especiesDoInventario(inv), setEsp);
     $("#cf-addfuste").onclick = () => { pt.fustes.push(novoFuste()); $("#cf-fustes").innerHTML = fustesHtml(); ligarFustes(); };
+    $("#cf-mover").onclick = async () => {
+      const c = map.getCenter();
+      pt.lat = c.lat; pt.lon = c.lng;
+      const sp = $(".censo-form-coord"); if (sp) sp.textContent = fmtCoordDec(pt.lat, pt.lon);
+      if (!est.pontos.includes(pt)) est.pontos.push(pt);
+      await salvarJa(); renderPontos();
+    };
     const fechar = () => { painel.innerHTML = ""; mostrarAdd(true); };
     $("#cf-fechar").onclick = fechar;
     $("#cf-salvar").onclick = async () => {
@@ -2031,14 +2152,16 @@ async function telaCenso(estratoId) {
     }
   }
 
-  // pré-download da área visível (zoom atual .. +2) pro cache de tiles offline
+  // pré-download da área visível numa FAIXA de zooms (afasta e aproxima offline
+  // sem ficar branco): do zoom atual −2 até +2 (limitado 13..19).
   async function baixarAreaCenso() {
     const painel = $("#censo-painel");
     const b = map.getBounds();
     const z0 = Math.round(map.getZoom());
+    const zMin = Math.max(13, z0 - 2);
     const zMax = Math.min(19, z0 + 2);
     const urls = [];
-    for (let z = z0; z <= zMax; z++) {
+    for (let z = zMin; z <= zMax; z++) {
       const t1 = lonLatParaTile(b.getWest(), b.getNorth(), z);
       const t2 = lonLatParaTile(b.getEast(), b.getSouth(), z);
       for (let x = t1.x; x <= t2.x; x++) {
