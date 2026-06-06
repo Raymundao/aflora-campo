@@ -23,7 +23,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v40"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v41"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -1679,7 +1679,6 @@ async function telaCenso(estratoId) {
       <div class="trk-banner" id="trk-banner" hidden></div>
       <div class="censo-fabs">
         <button class="censo-fab" id="censo-lista" title="Lista de pontos">📋</button>
-        <button class="censo-fab" id="censo-centrar" title="Centralizar em mim">🎯</button>
         <button class="censo-fab" id="censo-bussola" title="Bússola">🧭</button>
         <button class="censo-fab" id="censo-trilha" title="Gravar trilha">🛤️</button>
         <button class="censo-fab" id="censo-desenho" title="Desenhar polígono">✏️</button>
@@ -1687,6 +1686,7 @@ async function telaCenso(estratoId) {
         <button class="censo-fab" id="censo-baixar" title="Baixar área offline">⬇</button>
       </div>
       <input type="file" id="kml-file" accept=".kml,application/vnd.google-earth.kml+xml" hidden>
+      <button class="censo-fab censo-centrar-fixo" id="censo-centrar" title="Centralizar em mim">🎯</button>
       <button class="btn-grande destaque censo-add-fixo" id="censo-add">+ Ponto</button>
       <div class="censo-barra" id="censo-barra" hidden></div>
       <div class="censo-sheet" id="censo-painel"></div>
@@ -1696,7 +1696,8 @@ async function telaCenso(estratoId) {
   let centro = [-19.65, -43.9];
   const comCoord = est.pontos.filter((p) => p.lat != null);
   if (comCoord.length) centro = [comCoord[comCoord.length - 1].lat, comCoord[comCoord.length - 1].lon];
-  const map = L.map("mapa", { zoomControl: false, attributionControl: false, maxZoom: 21 }).setView(centro, 17);
+  // rotate:true (plugin leaflet-rotate) permite girar o mapa quando a bússola liga.
+  const map = L.map("mapa", { zoomControl: false, attributionControl: false, maxZoom: 21, rotate: true, rotateControl: false, touchRotate: false }).setView(centro, 17);
   L.control.zoom({ position: "bottomleft" }).addTo(map);
   _mapa = map;
   // camadas de satélite + seletor (igual "Mapas disponíveis" do AlpineQuest).
@@ -1820,8 +1821,11 @@ async function telaCenso(estratoId) {
     abrirFormPonto(novoPontoCenso(c.lat, c.lng, userAlt), true);
   };
   $("#censo-baixar").onclick = () => baixarAreaCenso();
-  // some/mostra o botão "+ Ponto" conforme o painel (sheet) abre/fecha
-  const mostrarAdd = (v) => { const b = $("#censo-add"); if (b) b.style.display = v ? "" : "none"; };
+  // some/mostra o "+ Ponto" e o 🎯 conforme o painel (sheet) abre/fecha
+  const mostrarAdd = (v) => {
+    const b = $("#censo-add"); if (b) b.style.display = v ? "" : "none";
+    const c = $("#censo-centrar"); if (c) c.style.display = v ? "" : "none";
+  };
 
   est.trilhas = est.trilhas || [];
   est.poligonos = est.poligonos || [];
@@ -1879,7 +1883,7 @@ async function telaCenso(estratoId) {
   renderTrilhas(); renderPoligonos();
 
   // ----- bússola (orientação do aparelho) -----
-  let bussolaOn = false;
+  let bussolaOn = false, ultimoBearing = null;
   function onOrient(ev) {
     let h = (ev.webkitCompassHeading != null) ? ev.webkitCompassHeading
       : (ev.absolute && ev.alpha != null) ? (360 - ev.alpha) : null;
@@ -1887,10 +1891,18 @@ async function telaCenso(estratoId) {
     const rosa = $("#bussola-rosa"), deg = $("#bussola-deg");
     if (rosa) rosa.style.transform = `rotate(${-h}deg)`;
     if (deg) deg.textContent = `${fmtNum(h, 0)}°`;
-    // cone de direção no ponto azul (mostra pra onde estou virado)
+    // cone/lanterna de direção no ponto azul (mostra pra onde estou virado).
+    // o mapa gira → o cone aponta sempre pra cima (compensa o bearing).
     if (userMarker && userMarker._icon) {
       const cone = userMarker._icon.querySelector(".cone-eu");
-      if (cone) { cone.hidden = false; cone.style.transform = `translateX(-50%) rotate(${h}deg)`; }
+      if (cone) { cone.hidden = false; cone.style.transform = "translateX(-50%) rotate(0deg)"; }
+    }
+    // gira o mapa pra direção que estou olhando ficar pra CIMA (estilo AlpineQuest).
+    // setBearing(-h): coloca o heading h no topo (o ícone do marcador fica em pé,
+    // então o cone aponta pra cima = pra frente). só re-renderiza se mudou >2°.
+    if (map.setBearing && (ultimoBearing == null || Math.abs(((h - ultimoBearing + 540) % 360) - 180) > 2)) {
+      ultimoBearing = h;
+      try { map.setBearing(-h); } catch (e) { /* */ }
     }
   }
   $("#censo-bussola").onclick = async () => {
@@ -1907,10 +1919,16 @@ async function telaCenso(estratoId) {
       _orientHandler = onOrient;
       window.addEventListener("deviceorientationabsolute", _orientHandler);
       window.addEventListener("deviceorientation", _orientHandler);
-    } else if (_orientHandler) {
-      window.removeEventListener("deviceorientationabsolute", _orientHandler);
-      window.removeEventListener("deviceorientation", _orientHandler);
-      _orientHandler = null;
+    } else {
+      if (_orientHandler) {
+        window.removeEventListener("deviceorientationabsolute", _orientHandler);
+        window.removeEventListener("deviceorientation", _orientHandler);
+        _orientHandler = null;
+      }
+      // desliga: volta o mapa pro Norte e esconde o cone
+      ultimoBearing = null;
+      try { if (map.setBearing) map.setBearing(0); } catch (e) { /* */ }
+      if (userMarker && userMarker._icon) { const cone = userMarker._icon.querySelector(".cone-eu"); if (cone) cone.hidden = true; }
     }
   };
 
