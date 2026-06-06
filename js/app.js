@@ -24,7 +24,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v43"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v44"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -1756,9 +1756,9 @@ async function telaCenso(estratoId) {
   CAMADAS_SAT.forEach((c, i) => {
     const layer = L.tileLayer(c.url, {
       maxZoom: 21, maxNativeZoom: c.maxNativeZoom,
-      keepBuffer: 6,            // mantém mais tiles ao redor → menos borda branca no pan
-      updateWhenZooming: false, // não recarrega no meio do zoom (evita pisca)
-      updateWhenIdle: true,     // só busca novos tiles quando para de mexer
+      keepBuffer: 4,            // mantém tiles ao redor → menos borda no pan
+      updateWhenIdle: false,    // carrega tiles JÁ ao mover/dar zoom (preenche bem mais rápido)
+      updateWhenZooming: true,  // atualiza durante o zoom (não espera parar)
       errorTileUrl: TILE_ERRO,  // falha offline = transparente (fundo escuro), não branco
     });
     baseLayers[c.nome] = layer;
