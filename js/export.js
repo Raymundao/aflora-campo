@@ -165,7 +165,7 @@ function kmlCenso(inv) {
     const coord = `${pt.lon},${pt.lat}${pt.alt != null ? "," + pt.alt : ""}`;
     return `<Placemark><name>${escX(nome || "ponto")}</name><description>${escX(desc)}</description><Point><coordinates>${coord}</coordinates></Point></Placemark>`;
   }).join("");
-  // trilhas e polígonos (de qualquer estrato censo)
+  // trilhas (por estrato censo) + fitofisionomias/polígonos (nível do projeto)
   let linhas = "", poligonos = "";
   for (const est of inv.estratos) {
     if (est.metodo !== "censo") continue;
@@ -174,13 +174,14 @@ function kmlCenso(inv) {
       const cs = t.pontos.map(([la, lo]) => `${lo},${la}`).join(" ");
       linhas += `<Placemark><name>${escX(t.nome || "trilha")}</name><Style><LineStyle><color>ff00aaff</color><width>3</width></LineStyle></Style><LineString><tessellate>1</tessellate><coordinates>${cs}</coordinates></LineString></Placemark>`;
     }
-    for (const pol of (est.poligonos || [])) {
-      if (!pol.coords || pol.coords.length < 3) continue;
-      const anel = pol.coords.concat([pol.coords[0]]).map(([la, lo]) => `${lo},${la}`).join(" ");
-      const corLinha = kmlCor(pol.corBorda, 1) || "ff2e7d32";
-      const corFill = kmlCor(pol.cor, pol.opacidade == null ? 0.3 : pol.opacidade) || "4d43a047";
-      poligonos += `<Placemark><name>${escX(pol.nome || "polígono")}</name><Style><LineStyle><color>${corLinha}</color><width>2</width></LineStyle><PolyStyle><color>${corFill}</color></PolyStyle></Style><Polygon><outerBoundaryIs><LinearRing><tessellate>1</tessellate><coordinates>${anel}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>`;
-    }
+  }
+  for (const pol of (inv.fitos || [])) {
+    if (!pol.coords || pol.coords.length < 3) continue;
+    const anel = pol.coords.concat([pol.coords[0]]).map(([la, lo]) => `${lo},${la}`).join(" ");
+    const nome = [pol.fito, pol.nome].filter(Boolean).join(" · ") || "fitofisionomia";
+    const corLinha = kmlCor(pol.corBorda, 1) || "ff2e7d32";
+    const corFill = kmlCor(pol.cor, pol.opacidade == null ? 0.3 : pol.opacidade) || "4d43a047";
+    poligonos += `<Placemark><name>${escX(nome)}</name><Style><LineStyle><color>${corLinha}</color><width>2</width></LineStyle><PolyStyle><color>${corFill}</color></PolyStyle></Style><Polygon><outerBoundaryIs><LinearRing><tessellate>1</tessellate><coordinates>${anel}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>`;
   }
   return `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${escX(inv.nome)} — censo</name>${marks}${linhas}${poligonos}</Document></kml>`;

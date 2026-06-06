@@ -24,7 +24,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v44"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v45"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -215,6 +215,21 @@ const rotuloFito = (fito) => EQUACOES_VOLUME[fito]?.rotulo || HERB_FITOS[fito] |
 const ehHerbaceo = (est) => est?.metodo === "herbaceo";
 const ehCenso = (est) => est?.metodo === "censo";
 
+// Tipos de fitofisionomia (aba Fitofisionomias) com cor padrão por tipo.
+const FITO_TIPOS = [
+  { nome: "Mata (FES)", cor: "#2E7D32" },
+  { nome: "Mata (FOD)", cor: "#1B5E20" },
+  { nome: "Mata (FED)", cor: "#558B2F" },
+  { nome: "Cerradão", cor: "#7CB342" },
+  { nome: "Cerrado sensu restrito", cor: "#C0CA33" },
+  { nome: "Campo cerrado", cor: "#FBC02D" },
+  { nome: "Campo sujo", cor: "#FFB300" },
+  { nome: "Campo limpo", cor: "#FFD54F" },
+  { nome: "Campo rupestre", cor: "#A1887F" },
+  { nome: "Pastagem", cor: "#FF8A65" },
+  { nome: "Antrópico / Outro", cor: "#9E9E9E" },
+];
+
 function labelEstrato(est) {
   const fito = rotuloFito(est.fitofisionomia);
   const tag = ehHerbaceo(est) ? ' <span class="badge tag-herb">🌱 herbáceo</span>' : "";
@@ -266,6 +281,7 @@ async function telaInventario(id) {
       <div class="seg-nav">
         <button class="seg ativo">📋 Parcelas</button>
         <button class="seg" id="ir-especies">🌿 Espécies${nEspecies ? " (" + nEspecies + ")" : ""}</button>
+        <button class="seg" id="ir-fitos">🗺️ Fitos${(inv.fitos || []).length ? " (" + inv.fitos.length + ")" : ""}</button>
       </div>
       <div class="acoes-linha"><button class="btn-sec largo" id="cfg">⚙ Config (estratos, área, erro)</button></div>
       <div class="cards">${estratosHtml}</div>
@@ -274,6 +290,7 @@ async function telaInventario(id) {
   ligarVoltar(telaInventarios);
   $("#cfg").onclick = telaConfig;
   $("#ir-especies").onclick = () => telaEspecies(inv.id);
+  $("#ir-fitos").onclick = () => telaCenso(null, "fitos");
   $("#ir-exportar").onclick = () => telaExportar(inv.id);
   $$("[data-estrato]").forEach((el) => {
     el.onclick = () => {
@@ -1702,11 +1719,22 @@ function lonLatParaTile(lon, lat, z) {
   return { x: clamp(x), y: clamp(y) };
 }
 
-async function telaCenso(estratoId) {
+async function telaCenso(estratoId, modo = "censo") {
   if (!inv) return telaInventarios();
-  const est = estPorId(estratoId);
-  if (!est) return telaInventario(inv.id);
-  est.pontos = est.pontos || [];
+  const ehFitos = modo === "fitos";
+  const est = ehFitos ? null : estPorId(estratoId);
+  if (!ehFitos && !est) return telaInventario(inv.id);
+  // polígonos (fitofisionomias) e referências (ADA) são do PROJETO — compartilhados
+  // entre a aba Fitofisionomias e o censo. Pontos/trilhas seguem por estrato (censo).
+  inv.fitos = inv.fitos || [];
+  inv.geoRefs = inv.geoRefs || [];
+  if (est) {
+    est.pontos = est.pontos || [];
+    est.trilhas = est.trilhas || [];
+    // migração: polígonos/refs antigos do estrato sobem pro projeto
+    if (est.poligonos && est.poligonos.length) { inv.fitos.push(...est.poligonos); est.poligonos = []; }
+    if (est.referencias && est.referencias.length) { inv.geoRefs.push(...est.referencias); est.referencias = []; }
+  }
   destruirMapa();
   if (!window.L) {
     app.innerHTML = `${header("Censo", () => telaInventario(inv.id))}
@@ -1724,25 +1752,30 @@ async function telaCenso(estratoId) {
       <div class="bussola" id="bussola" hidden><div class="bussola-rosa" id="bussola-rosa"><span class="bussola-n">N</span></div><span class="bussola-deg" id="bussola-deg">—</span></div>
       <div class="trk-banner" id="trk-banner" hidden></div>
       <div class="censo-fabs">
-        <button class="censo-fab" id="censo-camadas" title="Camadas (editar pontos/polígonos/trilhas)">🗂️</button>
-        <button class="censo-fab" id="censo-lista" title="Lista de pontos">📋</button>
+        <button class="censo-fab" id="censo-camadas" title="Camadas (editar)">🗂️</button>
+        ${ehFitos ? "" : '<button class="censo-fab" id="censo-lista" title="Lista de pontos">📋</button>'}
         <button class="censo-fab" id="censo-bussola" title="Bússola">🧭</button>
-        <button class="censo-fab" id="censo-trilha" title="Gravar trilha">🛤️</button>
-        <button class="censo-fab" id="censo-desenho" title="Desenhar polígono">✏️</button>
+        ${ehFitos ? "" : '<button class="censo-fab" id="censo-trilha" title="Gravar trilha">🛤️</button>'}
+        <button class="censo-fab" id="censo-desenho" title="Desenhar fitofisionomia/polígono">✏️</button>
         <button class="censo-fab" id="censo-importar" title="Importar KML (ADA…)">📂</button>
         <button class="censo-fab" id="censo-baixar" title="Baixar área offline">⬇</button>
       </div>
       <input type="file" id="kml-file" accept=".kml,application/vnd.google-earth.kml+xml" hidden>
       <button class="censo-fab censo-centrar-fixo" id="censo-centrar" title="Centralizar em mim">🎯</button>
-      <button class="btn-grande destaque censo-add-fixo" id="censo-add">+ Ponto</button>
+      ${ehFitos
+        ? '<button class="btn-grande destaque censo-add-fixo" id="censo-add-fito">✏️ Desenhar fito</button>'
+        : '<button class="btn-grande destaque censo-add-fixo" id="censo-add">+ Ponto</button>'}
       <div class="censo-barra" id="censo-barra" hidden></div>
       <div class="censo-sheet" id="censo-painel"></div>
     </div>`;
 
   const L = window.L;
   let centro = [-19.65, -43.9];
-  const comCoord = est.pontos.filter((p) => p.lat != null);
+  // centro inicial: último ponto do censo, ou 1º vértice de uma fito/referência
+  const comCoord = (est?.pontos || []).filter((p) => p.lat != null);
   if (comCoord.length) centro = [comCoord[comCoord.length - 1].lat, comCoord[comCoord.length - 1].lon];
+  else if (inv.fitos[0]?.coords?.[0]) centro = inv.fitos[0].coords[0];
+  else if (inv.geoRefs[0]?.coords?.[0]) centro = inv.geoRefs[0].coords[0];
   // rotate:true (plugin leaflet-rotate) permite girar o mapa quando a bússola liga.
   const map = L.map("mapa", { zoomControl: false, attributionControl: false, maxZoom: 21, rotate: true, rotateControl: false, touchRotate: false }).setView(centro, 17);
   L.control.zoom({ position: "bottomleft" }).addTo(map);
@@ -1845,6 +1878,8 @@ async function telaCenso(estratoId) {
 
   function renderPontos() {
     if (renderPontos._layer) renderPontos._layer.remove();
+    renderPontos._layer = null;
+    if (!est) return; // modo fitos não tem pontos
     const grupo = L.layerGroup();
     est.pontos.forEach((pt, i) => {
       if (pt.lat == null) return;
@@ -1863,23 +1898,24 @@ async function telaCenso(estratoId) {
 
   $("#censo-voltar").onclick = voltar;
   $("#censo-centrar").onclick = () => { if (userLatLng) map.setView(userLatLng, Math.max(map.getZoom(), 18)); };
-  $("#censo-add").onclick = () => {
-    const c = map.getCenter();
-    abrirFormPonto(novoPontoCenso(c.lat, c.lng, userAlt), true);
-  };
+  if (!ehFitos) {
+    $("#censo-add").onclick = () => {
+      const c = map.getCenter();
+      abrirFormPonto(novoPontoCenso(c.lat, c.lng, userAlt), true);
+    };
+  }
   $("#censo-baixar").onclick = () => baixarAreaCenso();
-  // some/mostra o "+ Ponto" e o 🎯 conforme o painel (sheet) abre/fecha
+  // some/mostra os botões de baixo (+Ponto / Desenhar fito) e o 🎯 conforme o painel abre/fecha
   const mostrarAdd = (v) => {
-    const b = $("#censo-add"); if (b) b.style.display = v ? "" : "none";
+    const b = $("#censo-add") || $("#censo-add-fito"); if (b) b.style.display = v ? "" : "none";
     const c = $("#censo-centrar"); if (c) c.style.display = v ? "" : "none";
   };
-
-  est.trilhas = est.trilhas || [];
-  est.poligonos = est.poligonos || [];
 
   // ----- trilhas e polígonos salvos no mapa -----
   function renderTrilhas() {
     if (renderTrilhas._l) renderTrilhas._l.remove();
+    renderTrilhas._l = null;
+    if (!est) return; // modo fitos não tem trilhas
     const g = L.layerGroup();
     for (const t of est.trilhas) if (t.pontos && t.pontos.length > 1) L.polyline(t.pontos, { color: "#E53935", weight: 3, opacity: 0.7 }).addTo(g);
     g.addTo(map); renderTrilhas._l = g;
@@ -1887,27 +1923,31 @@ async function telaCenso(estratoId) {
   function renderPoligonos() {
     if (renderPoligonos._l) renderPoligonos._l.remove();
     const g = L.layerGroup();
-    for (const p of est.poligonos) {
+    for (const p of inv.fitos) {
       if (!p.coords || p.coords.length < 3) continue;
       const poly = L.polygon(p.coords, {
         color: p.corBorda || "#2E7D32", weight: 2,
         fillColor: p.cor || "#43A047", fillOpacity: p.opacidade ?? 0.25,
       });
-      poly.bindTooltip(`${esc(p.nome || "polígono")} · ${fmtNum(p.areaM2 / 10000, 4)} ha`);
+      const rot = [p.fito, p.nome].filter(Boolean).join(" · ") || "fitofisionomia";
+      poly.bindTooltip(`${esc(rot)} · ${fmtNum(p.areaM2 / 10000, 4)} ha`);
       poly.on("click", () => abrirFormPoligono(p));
       poly.addTo(g);
     }
     g.addTo(map); renderPoligonos._l = g;
   }
-  // tela do polígono: nome, cor de preenchimento/borda, transparência, excluir
+  // tela da fitofisionomia/polígono: tipo, nome, cores, transparência, excluir
   function abrirFormPoligono(pol) {
     const painel = $("#censo-painel"); mostrarAdd(false);
     const opPct = Math.round((pol.opacidade ?? 0.25) * 100);
+    const tipoOpts = ['<option value="">— escolher tipo —</option>']
+      .concat(FITO_TIPOS.map((t) => `<option value="${esc(t.nome)}" ${t.nome === pol.fito ? "selected" : ""}>${esc(t.nome)}</option>`)).join("");
     painel.innerHTML = `<div class="censo-form">
-      <div class="censo-form-top"><b>Polígono</b>
+      <div class="censo-form-top"><b>Fitofisionomia</b>
         <span class="censo-form-coord">${fmtNum(pol.areaM2 / 10000, 4)} ha</span>
         <button class="btn-foto" id="pol-fechar">✕</button></div>
-      <label class="campo">Nome<input id="pol-nome" value="${esc(pol.nome || "")}"></label>
+      <label class="campo">Tipo<select id="pol-fito">${tipoOpts}</select></label>
+      <label class="campo">Nome (opcional)<input id="pol-nome" value="${esc(pol.nome || "")}"></label>
       <div class="linha2">
         <label>Cor do preenchimento<input id="pol-cor" type="color" value="${pol.cor || "#43A047"}"></label>
         <label>Cor da borda<input id="pol-borda" type="color" value="${pol.corBorda || "#2E7D32"}"></label>
@@ -1920,12 +1960,19 @@ async function telaCenso(estratoId) {
       </div></div>`;
     const fechar = () => { painel.innerHTML = ""; mostrarAdd(true); };
     $("#pol-fechar").onclick = fechar;
+    // escolher o tipo já sugere a cor padrão dele (preenchimento + borda)
+    $("#pol-fito").onchange = (e) => {
+      pol.fito = e.target.value;
+      const t = FITO_TIPOS.find((x) => x.nome === pol.fito);
+      if (t) { pol.cor = t.cor; pol.corBorda = t.cor; $("#pol-cor").value = t.cor; $("#pol-borda").value = t.cor; }
+      renderPoligonos();
+    };
     $("#pol-nome").oninput = (e) => { pol.nome = e.target.value; };
     $("#pol-cor").oninput = (e) => { pol.cor = e.target.value; renderPoligonos(); };
     $("#pol-borda").oninput = (e) => { pol.corBorda = e.target.value; renderPoligonos(); };
     $("#pol-op").oninput = (e) => { pol.opacidade = (+e.target.value) / 100; $("#pol-op-val").textContent = e.target.value + "%"; renderPoligonos(); };
     $("#pol-ok").onclick = async () => { await salvarJa(); fechar(); renderPoligonos(); };
-    $("#pol-del").onclick = async () => { if (!confirm(`Excluir o polígono "${pol.nome || ""}"?`)) return; est.poligonos = est.poligonos.filter((x) => x.id !== pol.id); await salvarJa(); fechar(); renderPoligonos(); };
+    $("#pol-del").onclick = async () => { if (!confirm(`Excluir "${pol.fito || pol.nome || "fitofisionomia"}"?`)) return; inv.fitos = inv.fitos.filter((x) => x.id !== pol.id); await salvarJa(); fechar(); renderPoligonos(); };
   }
   renderTrilhas(); renderPoligonos();
 
@@ -1979,8 +2026,8 @@ async function telaCenso(estratoId) {
     }
   };
 
-  // ----- gravador de trilha (start/stop) -----
-  $("#censo-trilha").onclick = async () => {
+  // ----- gravador de trilha (start/stop) — só no censo -----
+  if ($("#censo-trilha")) $("#censo-trilha").onclick = async () => {
     if (!gravando) {
       gravando = true;
       trilhaPts = []; if (trilhaLinha) { trilhaLinha.remove(); trilhaLinha = null; }
@@ -2032,13 +2079,12 @@ async function telaCenso(estratoId) {
   }
   async function concluirDesenho() {
     if (!desenho || desenho.coords.length < 3) { alert("Precisa de pelo menos 3 vértices."); return; }
-    const nome = prompt("Nome do polígono:", "Polígono " + (est.poligonos.length + 1));
-    if (nome == null) return;
-    const pol = novoPoligono(desenho.tipo, nome.trim() || "Polígono " + (est.poligonos.length + 1));
+    const pol = novoPoligono(desenho.tipo, "");
     pol.coords = desenho.coords.slice();
     pol.areaM2 = areaAnelM2(pol.coords);
-    est.poligonos.push(pol); await salvarJa();
+    inv.fitos.push(pol); await salvarJa();
     limparDesenho(); renderPoligonos();
+    abrirFormPoligono(pol); // abre pra escolher tipo / nome / cor
   }
   function iniciarDesenho(tipo) {
     limparDesenho();
@@ -2071,17 +2117,19 @@ async function telaCenso(estratoId) {
     }
     redesenharDesenho();
   }
-  $("#censo-desenho").onclick = () => {
+  function abrirMenuDesenho() {
     if (desenho) { limparDesenho(); return; }
     const barra = $("#censo-barra"); barra.hidden = false; mostrarAdd(false);
-    barra.innerHTML = `<span>Polígono:</span>
+    barra.innerHTML = `<span>${ehFitos ? "Nova fitofisionomia:" : "Polígono:"}</span>
       <button class="btn-sec" id="d-pontos">📍 Por pontos</button>
       <button class="btn-sec" id="d-mao">✍️ À mão livre</button>
       <button class="btn-foto" id="d-cancel">✕</button>`;
     $("#d-pontos").onclick = () => iniciarDesenho("pontos");
     $("#d-mao").onclick = () => iniciarDesenho("maolivre");
     $("#d-cancel").onclick = () => { barra.hidden = true; barra.innerHTML = ""; mostrarAdd(true); };
-  };
+  }
+  $("#censo-desenho").onclick = abrirMenuDesenho;
+  if (ehFitos) { const bf = $("#censo-add-fito"); if (bf) bf.onclick = abrirMenuDesenho; }
 
   // ----- lista de pontos (ordenável) -----
   function pontosOrdenados(modo) {
@@ -2132,10 +2180,10 @@ async function telaCenso(estratoId) {
       };
     });
   }
-  $("#censo-lista").onclick = abrirLista;
+  if ($("#censo-lista")) $("#censo-lista").onclick = abrirLista;
 
   // ----- importar KML (referência: ADA, talhões…) -----
-  est.referencias = est.referencias || [];
+  inv.geoRefs = inv.geoRefs || [];
   function parseKML(txt) {
     const doc = new DOMParser().parseFromString(txt, "application/xml");
     const out = [];
@@ -2157,7 +2205,7 @@ async function telaCenso(estratoId) {
   function renderReferencias() {
     if (renderReferencias._l) renderReferencias._l.remove();
     const g = L.layerGroup();
-    for (const r of est.referencias) {
+    for (const r of inv.geoRefs) {
       const borda = r.corBorda || "#00BCD4";
       let lay;
       if (r.tipo === "poligono") {
@@ -2203,7 +2251,7 @@ async function telaCenso(estratoId) {
       $("#ref-op").oninput = (e) => { r.opacidade = (+e.target.value) / 100; $("#ref-op-val").textContent = e.target.value + "%"; renderReferencias(); };
     }
     $("#ref-ok").onclick = async () => { await salvarJa(); fechar(); renderReferencias(); };
-    $("#ref-del").onclick = async () => { if (!confirm(`Remover a referência "${r.nome || r.tipo}"?`)) return; est.referencias = est.referencias.filter((x) => x !== r); await salvarJa(); fechar(); renderReferencias(); };
+    $("#ref-del").onclick = async () => { if (!confirm(`Remover a referência "${r.nome || r.tipo}"?`)) return; inv.geoRefs = inv.geoRefs.filter((x) => x !== r); await salvarJa(); fechar(); renderReferencias(); };
   }
   renderReferencias();
   $("#censo-importar").onclick = () => $("#kml-file").click();
@@ -2212,7 +2260,7 @@ async function telaCenso(estratoId) {
     try {
       const geoms = parseKML(await file.text());
       if (!geoms.length) { alert("Não achei geometrias (polígono/linha/ponto) nesse KML."); e.target.value = ""; return; }
-      est.referencias.push(...geoms.map((g) => ({ ...g, fonte: file.name })));
+      inv.geoRefs.push(...geoms.map((g) => ({ ...g, fonte: file.name })));
       await salvarJa(); renderReferencias();
       const first = geoms.find((g) => g.coords.length > 1);
       if (first) map.fitBounds(L.latLngBounds(first.coords));
@@ -2239,22 +2287,23 @@ async function telaCenso(estratoId) {
     const painel = $("#censo-painel"); mostrarAdd(false);
     const swatch = (cor) => `<span class="cam-cor" style="background:${esc(cor)}"></span>`;
     const secao = (titulo, html) => html ? `<h3>${titulo}</h3><div class="cards">${html}</div>` : "";
-    const pols = est.poligonos.map((p) => `<div class="card" data-cam-pol="${p.id}"><div class="card-corpo"><div class="card-nome">▱ ${esc(p.nome || "polígono")}</div><div class="card-sub">${fmtNum(p.areaM2 / 10000, 4)} ha · desenhado</div></div><div class="card-acoes">${swatch(p.cor || "#43A047")}</div></div>`).join("");
-    const trks = est.trilhas.map((t, i) => `<div class="card" data-cam-trk="${i}"><div class="card-corpo"><div class="card-nome">〰 ${esc(t.nome || "trilha")}</div><div class="card-sub">${t.pontos.length} pts · gravada</div></div></div>`).join("");
-    const refs = est.referencias.map((r, i) => `<div class="card" data-cam-ref="${i}"><div class="card-corpo"><div class="card-nome">${r.tipo === "poligono" ? "▱" : r.tipo === "linha" ? "〰" : "•"} ${esc(r.nome || r.tipo)}</div><div class="card-sub">importado · ${esc(r.fonte || "KML")}</div></div><div class="card-acoes">${swatch(r.corBorda || "#00BCD4")}</div></div>`).join("");
+    const pols = inv.fitos.map((p) => `<div class="card" data-cam-pol="${p.id}"><div class="card-corpo"><div class="card-nome">▱ ${esc(p.fito || p.nome || "fitofisionomia")}</div><div class="card-sub">${fmtNum(p.areaM2 / 10000, 4)} ha${p.fito && p.nome ? " · " + esc(p.nome) : ""}</div></div><div class="card-acoes">${swatch(p.cor || "#43A047")}</div></div>`).join("");
+    const trks = (est?.trilhas || []).map((t, i) => `<div class="card" data-cam-trk="${i}"><div class="card-corpo"><div class="card-nome">〰 ${esc(t.nome || "trilha")}</div><div class="card-sub">${t.pontos.length} pts · gravada</div></div></div>`).join("");
+    const refs = inv.geoRefs.map((r, i) => `<div class="card" data-cam-ref="${i}"><div class="card-corpo"><div class="card-nome">${r.tipo === "poligono" ? "▱" : r.tipo === "linha" ? "〰" : "•"} ${esc(r.nome || r.tipo)}</div><div class="card-sub">importado · ${esc(r.fonte || "KML")}</div></div><div class="card-acoes">${swatch(r.corBorda || "#00BCD4")}</div></div>`).join("");
+    const vazio = !inv.fitos.length && !(est?.trilhas?.length) && !inv.geoRefs.length;
     painel.innerHTML = `<div class="censo-form">
       <div class="censo-form-top"><b>Camadas</b><span style="flex:1"></span><button class="btn-foto" id="cam-fechar">✕</button></div>
-      <div class="cards"><div class="card" id="cam-pontos"><div class="card-corpo"><div class="card-nome">📍 Meus pontos (${est.pontos.length})</div><div class="card-sub">toque pra listar / ordenar / editar</div></div></div></div>
-      ${secao("Polígonos desenhados", pols)}
+      ${est ? `<div class="cards"><div class="card" id="cam-pontos"><div class="card-corpo"><div class="card-nome">📍 Meus pontos (${est.pontos.length})</div><div class="card-sub">toque pra listar / ordenar / editar</div></div></div></div>` : ""}
+      ${secao("Fitofisionomias / polígonos", pols)}
       ${secao("Trilhas gravadas", trks)}
       ${secao("Referências importadas (KML)", refs)}
-      ${(!est.poligonos.length && !est.trilhas.length && !est.referencias.length) ? '<p class="vazio">Só os pontos por enquanto. Desenhe polígonos, grave trilhas ou importe um KML.</p>' : ""}
+      ${vazio ? `<p class="vazio">${ehFitos ? "Nenhuma fitofisionomia ainda. Desenhe (✏️) ou importe um KML (📂)." : "Sem camadas extras ainda."}</p>` : ""}
     </div>`;
     $("#cam-fechar").onclick = () => { painel.innerHTML = ""; mostrarAdd(true); };
-    $("#cam-pontos").onclick = abrirLista;
-    painel.querySelectorAll("[data-cam-pol]").forEach((el) => { el.onclick = () => { const p = est.poligonos.find((x) => x.id === el.dataset.camPol); if (p) abrirFormPoligono(p); }; });
+    if ($("#cam-pontos")) $("#cam-pontos").onclick = abrirLista;
+    painel.querySelectorAll("[data-cam-pol]").forEach((el) => { el.onclick = () => { const p = inv.fitos.find((x) => x.id === el.dataset.camPol); if (p) abrirFormPoligono(p); }; });
     painel.querySelectorAll("[data-cam-trk]").forEach((el) => { el.onclick = () => { const t = est.trilhas[+el.dataset.camTrk]; if (t) abrirFormTrilha(t); }; });
-    painel.querySelectorAll("[data-cam-ref]").forEach((el) => { el.onclick = () => { const r = est.referencias[+el.dataset.camRef]; if (r) abrirFormReferencia(r); }; });
+    painel.querySelectorAll("[data-cam-ref]").forEach((el) => { el.onclick = () => { const r = inv.geoRefs[+el.dataset.camRef]; if (r) abrirFormReferencia(r); }; });
   }
   $("#censo-camadas").onclick = abrirCamadas;
 
