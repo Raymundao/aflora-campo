@@ -22,7 +22,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v36"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v37"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -1663,28 +1663,26 @@ async function telaCenso(estratoId) {
     return;
   }
   const voltar = () => { destruirMapa(); telaInventario(inv.id); };
-  app.innerHTML = `${header(rotuloFito(est.fitofisionomia) + " · censo", voltar)}
-    <main class="censo-main">
-      <div class="censo-top" id="censo-coords">—</div>
-      <div class="mapa-wrap">
-        <div id="mapa"></div>
-        <div class="censo-mira">✛</div>
-        <div class="censo-leitura" id="censo-leitura">aguardando GPS…</div>
+  // tela cheia (estilo AlpineQuest): mapa ocupa tudo, controles flutuam por cima.
+  app.innerHTML = `<div class="censo-tela">
+      <div id="mapa"></div>
+      <div class="censo-dot" id="censo-dot"></div>
+      <div class="censo-label" id="censo-label" hidden></div>
+      <button class="censo-fab censo-voltar" id="censo-voltar" aria-label="Voltar">‹</button>
+      <div class="censo-fabs">
+        <button class="censo-fab" id="censo-centrar" title="Centralizar em mim">🎯</button>
+        <button class="censo-fab" id="censo-baixar" title="Baixar área offline">⬇</button>
       </div>
-      <div class="censo-acoes">
-        <button class="btn-sec" id="censo-centrar">🎯 Eu</button>
-        <button class="btn-grande destaque" id="censo-add">+ Ponto aqui</button>
-        <button class="btn-sec" id="censo-baixar">⬇ Área</button>
-      </div>
-      <div id="censo-painel"></div>
-    </main>`;
-  ligarVoltar(voltar);
+      <button class="btn-grande destaque censo-add-fixo" id="censo-add">+ Ponto</button>
+      <div class="censo-sheet" id="censo-painel"></div>
+    </div>`;
 
   const L = window.L;
   let centro = [-19.65, -43.9];
   const comCoord = est.pontos.filter((p) => p.lat != null);
   if (comCoord.length) centro = [comCoord[comCoord.length - 1].lat, comCoord[comCoord.length - 1].lon];
-  const map = L.map("mapa", { zoomControl: true, attributionControl: false, maxZoom: 21 }).setView(centro, 17);
+  const map = L.map("mapa", { zoomControl: false, attributionControl: false, maxZoom: 21 }).setView(centro, 17);
+  L.control.zoom({ position: "bottomleft" }).addTo(map);
   _mapa = map;
   // camadas de satélite + seletor (igual "Mapas disponíveis" do AlpineQuest).
   // tileTemplate guarda a URL da camada ativa pro pré-download de área.
@@ -1705,19 +1703,35 @@ async function telaCenso(estratoId) {
   let userLatLng = null, userAlt = null, userAcc = null, userMarker = null, linha = null;
   const iconeEu = L.divIcon({ className: "marcador-eu", html: '<div class="dot-eu"></div>', iconSize: [22, 22] });
 
+  // linha fina da minha posição até a mira (bolinha central no DOM) + label na linha
   function atualizarLeitura() {
     const c = map.getCenter();
-    $("#censo-coords").innerHTML = `${fmtCoordDec(c.lat, c.lng)}${userAlt != null ? ` · ↑${fmtNum(userAlt, 0)} m` : ""}`;
-    const el = $("#censo-leitura");
-    if (!el) return;
+    const lbl = $("#censo-label");
+    if (!lbl) return;
     if (userLatLng) {
-      const d = distanciaM(userLatLng, c), b = rumoGraus(userLatLng, c);
-      el.innerHTML = `→ <b>${fmtNum(d, 0)} m</b> · ${fmtNum(b, 0)}°${userAcc != null ? ` · GPS ±${fmtNum(userAcc, 0)} m` : ""}`;
-      if (!linha) linha = L.polyline([userLatLng, c], { color: "#1565C0", weight: 3, opacity: 0.9 }).addTo(map);
+      const d = distanciaM(userLatLng, c);
+      lbl.hidden = false;
+      lbl.innerHTML = `<b>${fmtNum(d, 0)} m</b>${userAlt != null ? `<span>↑${fmtNum(userAlt, 0)} m</span>` : ""}`;
+      if (!linha) linha = L.polyline([userLatLng, c], { color: "#1565C0", weight: 1.6, opacity: 0.85, dashArray: null }).addTo(map);
       else linha.setLatLngs([userLatLng, c]);
-    } else { el.textContent = "aguardando GPS…"; }
+    } else {
+      lbl.hidden = false;
+      lbl.innerHTML = "<span>aguardando GPS…</span>";
+    }
   }
   map.on("move", atualizarLeitura);
+
+  // rastro recente (breadcrumb): segmentos amarelos que vão sumindo conforme ando.
+  const RASTRO_MAX = 30;
+  const rastro = [];
+  const rastroLayer = L.layerGroup().addTo(map);
+  function desenharRastro() {
+    rastroLayer.clearLayers();
+    for (let i = 1; i < rastro.length; i++) {
+      const op = (i / rastro.length) * 0.75; // mais novo = mais visível; mais antigo apaga
+      L.polyline([rastro[i - 1], rastro[i]], { color: "#FFC107", weight: 3, opacity: op }).addTo(rastroLayer);
+    }
+  }
 
   if (navigator.geolocation) {
     _watchId = navigator.geolocation.watchPosition((pos) => {
@@ -1725,6 +1739,13 @@ async function telaCenso(estratoId) {
       userAlt = pos.coords.altitude; userAcc = pos.coords.accuracy;
       if (!userMarker) { userMarker = L.marker(userLatLng, { icon: iconeEu }).addTo(map); map.setView(userLatLng, map.getZoom()); }
       else userMarker.setLatLng(userLatLng);
+      // só guarda no rastro se andei o suficiente (não polui parado)
+      const last = rastro[rastro.length - 1];
+      if (!last || distanciaM({ lat: last[0], lng: last[1] }, userLatLng) > 2) {
+        rastro.push([userLatLng.lat, userLatLng.lng]);
+        if (rastro.length > RASTRO_MAX) rastro.shift();
+        desenharRastro();
+      }
       atualizarLeitura();
     }, () => {}, { enableHighAccuracy: true, maximumAge: 2000, timeout: 15000 });
   }
@@ -1745,16 +1766,20 @@ async function telaCenso(estratoId) {
   renderPontos();
   atualizarLeitura();
 
+  $("#censo-voltar").onclick = voltar;
   $("#censo-centrar").onclick = () => { if (userLatLng) map.setView(userLatLng, Math.max(map.getZoom(), 18)); };
   $("#censo-add").onclick = () => {
     const c = map.getCenter();
     abrirFormPonto(novoPontoCenso(c.lat, c.lng, userAlt), true);
   };
   $("#censo-baixar").onclick = () => baixarAreaCenso();
+  // some/mostra o botão "+ Ponto" conforme o painel (sheet) abre/fecha
+  const mostrarAdd = (v) => { const b = $("#censo-add"); if (b) b.style.display = v ? "" : "none"; };
 
-  // form inline do ponto (painel embaixo do mapa — não sai da tela)
+  // form do ponto: sobe num painel (sheet) sobre o rodapé do mapa — não sai da tela
   function abrirFormPonto(pt, ehNovo) {
     const painel = $("#censo-painel");
+    mostrarAdd(false);
     const fustesHtml = () => pt.fustes.map((f, i) => `<div class="fuste-linha" data-i="${i}">
       <span class="fuste-num">${i + 1}</span>
       <input class="cf-cap" data-i="${i}" type="number" step="0.1" inputmode="decimal" placeholder="CAP" value="${f.capCm ?? ""}">
@@ -1793,12 +1818,13 @@ async function telaCenso(estratoId) {
     $("#cf-especie").oninput = (e) => setEsp(e.target.value);
     ligarAutocomplete($("#cf-especie"), $("#cf-esp-toggle"), $("#cf-esp-lista"), () => especiesDoInventario(inv), setEsp);
     $("#cf-addfuste").onclick = () => { pt.fustes.push(novoFuste()); $("#cf-fustes").innerHTML = fustesHtml(); ligarFustes(); };
-    $("#cf-fechar").onclick = () => { painel.innerHTML = ""; };
+    const fechar = () => { painel.innerHTML = ""; mostrarAdd(true); };
+    $("#cf-fechar").onclick = fechar;
     $("#cf-salvar").onclick = async () => {
       if (ehNovo && !est.pontos.includes(pt)) est.pontos.push(pt);
       if ((pt.especie || "").trim()) adicionarEspecie(inv, pt.especie.trim());
       await salvarJa();
-      painel.innerHTML = "";
+      fechar();
       renderPontos();
     };
     if (!ehNovo) {
@@ -1806,7 +1832,7 @@ async function telaCenso(estratoId) {
         if (!confirm("Excluir este ponto?")) return;
         est.pontos = est.pontos.filter((x) => x.id !== pt.id);
         await salvarJa();
-        painel.innerHTML = "";
+        fechar();
         renderPontos();
       };
     }
@@ -1829,7 +1855,10 @@ async function telaCenso(estratoId) {
       }
     }
     if (urls.length > 2000 && !confirm(`Essa área tem ${urls.length} tiles (pode demorar/pesar). Aproxime o zoom pra baixar menos, ou continue assim mesmo?`)) return;
-    painel.innerHTML = `<div class="info" id="dl-prog">Baixando 0/${urls.length} tiles…</div>`;
+    mostrarAdd(false);
+    painel.innerHTML = `<div class="censo-form"><div class="info" id="dl-prog">Baixando 0/${urls.length} tiles…</div>
+      <button class="btn-sec largo" id="dl-fechar">Fechar</button></div>`;
+    $("#dl-fechar").onclick = () => { painel.innerHTML = ""; mostrarAdd(true); };
     let cache;
     try { cache = await caches.open("aflora-tiles-v1"); }
     catch (e) { const el = $("#dl-prog"); if (el) el.textContent = "Cache indisponível neste navegador."; return; }
