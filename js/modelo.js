@@ -75,7 +75,23 @@ export function renomearEspecie(inv, antigo, novo) {
     .map((s) => ((s || "").trim() === antigo ? novo : (s || "").trim()))
     .filter(Boolean))];
   if (!inv.especies.includes(novo)) inv.especies.push(novo);
+  // migra o hábito (arbórea/não-arbórea) pro novo nome
+  if (inv.especiesHabito && inv.especiesHabito[antigo] != null) {
+    inv.especiesHabito[novo] = inv.especiesHabito[antigo];
+    delete inv.especiesHabito[antigo];
+  }
   return n;
+}
+
+// Hábito da espécie: "arborea" | "nao_arborea" | null (não classificada).
+export function habitoEspecie(inv, nome) {
+  return (inv.especiesHabito || {})[(nome || "").trim()] || null;
+}
+export function setHabitoEspecie(inv, nome, h) {
+  nome = (nome || "").trim();
+  if (!nome) return;
+  inv.especiesHabito = inv.especiesHabito || {};
+  if (h) inv.especiesHabito[nome] = h; else delete inv.especiesHabito[nome];
 }
 
 // metodo: "arboreo" (parcelas com indivíduos+fustes+volume) | "herbaceo"

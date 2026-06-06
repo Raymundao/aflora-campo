@@ -9,6 +9,7 @@ import {
   registroEspecies, adicionarEspecie, renomearEspecie,
   BB_CLASSES, BB_MIDPOINT, BB_DESC, ORIGENS_HERB, novoTaxon,
   resultadosHerbaceo, taxonsDoEstrato,
+  habitoEspecie, setHabitoEspecie,
 } from "./modelo.js";
 import { volumeIndividuo, EQUACOES_VOLUME } from "./calculos.js";
 import {
@@ -19,7 +20,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v33"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v34"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -1262,18 +1263,23 @@ async function telaEspecies(invId) {
   const contagem = {};
   for (const f of fotos) contagem[f.refKey] = (contagem[f.refKey] || 0) + 1;
   const nomes = registroEspecies(inv, fotos.map((f) => f.refKey));
-  const cards = nomes.length ? nomes.map((nome) =>
-    `<div class="card" data-esp="${esc(nome)}">
+  const HAB_BADGE = { arborea: '<span class="badge hab-arb">🌳 arbórea</span>', nao_arborea: '<span class="badge hab-naoarb">🌿 não-arbórea</span>' };
+  const cards = nomes.length ? nomes.map((nome) => {
+    const hab = habitoEfetivo(inv, nome) || "";
+    return `<div class="card" data-esp="${esc(nome)}" data-hab="${hab}">
        <div class="card-corpo">
-         <div class="card-nome"><i>${esc(nome)}</i></div>
+         <div class="card-nome"><i>${esc(nome)}</i> ${HAB_BADGE[hab] || ""}</div>
          <div class="card-sub">${contagem[nome] || 0} foto(s)</div>
        </div>
        <div class="card-acoes">
          <span class="badge ${contagem[nome] ? "ok" : ""}">${contagem[nome] ? "📷 " + contagem[nome] : "—"}</span>
          <button class="btn-foto perigo-icone" data-del-esp="${esc(nome)}" title="Excluir espécie">🗑</button>
        </div>
-     </div>`).join("")
+     </div>`;
+  }).join("")
     : '<p class="vazio">Nenhuma espécie ainda. As que você registrar nas parcelas aparecem aqui.</p>';
+  const filtro = localStorage.getItem("aflora-filtro-hab") || "todas";
+  const fChip = (v, t) => `<button class="filtro-chip ${v === filtro ? "sel" : ""}" data-filtro="${v}">${t}</button>`;
   app.innerHTML = `${header("Espécies", () => telaInventario(invId))}
     <main>
       <div class="seg-nav">
@@ -1282,6 +1288,7 @@ async function telaEspecies(invId) {
       </div>
       <button class="btn-grande" id="add-esp">+ Adicionar espécie</button>
       <input id="busca-esp" class="busca" type="search" placeholder="🔎 Buscar espécie…" autocomplete="off">
+      <div class="filtro-chips">${fChip("todas", "Todas")}${fChip("arborea", "🌳 Arbóreas")}${fChip("nao_arborea", "🌿 Não-arbóreas")}</div>
       <div class="cards">${cards}</div>
       <button class="btn-sec largo" id="exp-fotos-esp">⬇ Exportar fotos das espécies (ZIP)</button>
     </main>`;
@@ -1311,13 +1318,41 @@ async function telaEspecies(invId) {
     };
   });
   const buscaEl = $("#busca-esp");
-  buscaEl.oninput = () => {
+  // filtro (hábito) + busca (texto) aplicados juntos
+  const aplicarFiltro = () => {
     const t = semAcento(buscaEl.value);
+    const fil = localStorage.getItem("aflora-filtro-hab") || "todas";
     $$("[data-esp]").forEach((el) => {
-      el.style.display = (!t || semAcento(el.dataset.esp).includes(t)) ? "" : "none";
+      const okTexto = !t || semAcento(el.dataset.esp).includes(t);
+      const okHab = fil === "todas" || el.dataset.hab === fil;
+      el.style.display = (okTexto && okHab) ? "" : "none";
     });
   };
+  buscaEl.oninput = aplicarFiltro;
+  $$("[data-filtro]").forEach((el) => {
+    el.onclick = () => {
+      localStorage.setItem("aflora-filtro-hab", el.dataset.filtro);
+      $$("[data-filtro]").forEach((x) => x.classList.toggle("sel", x === el));
+      aplicarFiltro();
+    };
+  });
+  aplicarFiltro();
   $("#exp-fotos-esp").onclick = () => exportarZipEspecies(invId);
+}
+
+// Hábito EFETIVO: o que o usuário marcou; se nada, espécie registrada como
+// indivíduo (parcela arbórea/censo) conta como arbórea por padrão. Deixa o filtro
+// já útil sem marcar tudo na mão; a marcação manual sempre prevalece.
+function habitoEfetivo(inv, nome) {
+  const h = habitoEspecie(inv, nome);
+  if (h) return h;
+  const alvo = (nome || "").trim();
+  for (const p of inv.parcelas) {
+    const est = inv.estratos.find((e) => e.id === p.estratoId);
+    if (est && est.metodo === "herbaceo") continue; // herbáceo não define arbóreo
+    if (p.individuos.some((ind) => (ind.especie || "").trim() === alvo)) return "arborea";
+  }
+  return null;
 }
 
 const CATEGORIAS_FOTO = ["Geral", "Serrapilheira", "Dossel", "Sub-bosque"];
@@ -1349,10 +1384,15 @@ async function telaEspecie(invId, nome) {
        <div class="card-nome">📁 ${k ? esc(rotulo[k] || k) : "Sem parcela (avulsa)"}</div>
        <div class="card-sub">${porParc[k].length} foto(s)</div></div></div>`).join("")
     : '<p class="vazio">Nenhuma foto. Toque em "Tirar foto" ou use o 📷 ao registrar o indivíduo.</p>';
+  const hab = habitoEfetivo(inv, nome);
+  const habBtn = (v, t) => `<button class="orig-opt larga ${hab === v ? "sel" : ""}" data-hab-set="${v}">${t}</button>`;
   app.innerHTML = `${header("Espécie", () => telaEspecies(invId))}
     <main class="form">
       <label class="campo">Nome da espécie <small>(editar renomeia no inventário todo)</small>
         <input id="esp-nome" value="${esc(nome)}"></label>
+      <div class="campo">Hábito
+        <div class="bb-opts">${habBtn("arborea", "🌳 Arbórea")}${habBtn("nao_arborea", "🌿 Não-arbórea")}</div>
+      </div>
       <div class="info">${ocorre.length
         ? "Ocorre em: <b>" + esc(ocorre.join(", ")) + "</b>"
         : "Espécie avulsa — não registrada em parcelas (ex.: herbácea / fora das parcelas)."}</div>
@@ -1369,6 +1409,16 @@ async function telaEspecie(invId, nome) {
     await salvarJa();
     nomeAtual = novo;
   };
+  // hábito: toca pra marcar; toca de novo desmarca
+  $$("[data-hab-set]").forEach((el) => {
+    el.onclick = () => {
+      const v = el.dataset.habSet;
+      const atual = habitoEfetivo(inv, nomeAtual);
+      setHabitoEspecie(inv, nomeAtual, atual === v ? null : v);
+      $$("[data-hab-set]").forEach((x) => x.classList.toggle("sel", x.dataset.habSet === habitoEfetivo(inv, nomeAtual)));
+      agendarSalvar();
+    };
+  });
   $("#esp-foto").onclick = async () => {
     const nomeUse = $("#esp-nome").value.trim() || nomeAtual;
     const foto = await capturarFoto(invId, "especie", nomeUse, { parcelaId: "" });

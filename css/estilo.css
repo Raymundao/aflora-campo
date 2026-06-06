@@ -204,6 +204,14 @@ input:focus, select:focus, textarea:focus { outline: 3px solid var(--verde-claro
 .busca { margin: var(--e1) 0; }
 .dica-press { font-size: var(--fs-leg); padding: var(--e1) var(--e3); }
 
+/* ---------- chips de filtro (Espécies: todas/arbóreas/não-arbóreas) ---------- */
+.filtro-chips { display: flex; gap: var(--e1); flex-wrap: wrap; margin: var(--e1) 0; }
+.filtro-chip { flex: 1; min-width: 90px; min-height: 44px; background: var(--card); border: 2px solid var(--borda);
+  border-radius: var(--r-pill); color: var(--texto-fraco); font-weight: 700; font-size: var(--fs-leg); padding: 8px 10px; }
+.filtro-chip.sel { border-color: var(--verde); background: var(--ok-bg); color: var(--ok-fg); }
+.badge.hab-arb { background: #C8E6C9; color: #1B5E20; }
+.badge.hab-naoarb { background: #DCEDC8; color: #558B2F; }
+
 /* ---------- cabeçalho de seção com botão discreto (toggle parcela/categoria) ---------- */
 .sec-fotos-head { display: flex; align-items: center; justify-content: space-between; gap: var(--e2); }
 .sec-fotos-head h3 { margin: var(--e3) 0 var(--e1); }
