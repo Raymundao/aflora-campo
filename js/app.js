@@ -24,7 +24,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v47"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v48"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -1153,6 +1153,7 @@ function telaIndividuo(parcelaId, individuoId) {
         <div class="autocomplete">
           <input id="i-especie" value="${esc(ind.especie)}" autocomplete="off" placeholder="Digite ou toque em ▾">
           <button type="button" class="ac-cam" id="i-foto" aria-label="Foto da espécie">📷</button>
+          <button type="button" class="ac-cam" id="i-gal" aria-label="Foto da galeria">🖼️</button>
           <button type="button" class="ac-toggle" id="i-especie-toggle" aria-label="Ver espécies">▾</button>
           <div class="ac-lista" id="i-especie-lista" hidden></div>
         </div></label>
@@ -1254,12 +1255,14 @@ function telaIndividuo(parcelaId, individuoId) {
   );
   // atalho de foto da espécie: tira foto JÁ marcada com a parcela atual e manda
   // pro registro de Espécies (organiza por espécie → parcela).
-  $("#i-foto").onclick = async () => {
+  const fotoInd = async (galeria) => {
     const nome = (ind.especie || "").trim();
-    if (!nome) { alert("Preencha a espécie antes de tirar a foto."); return; }
-    const foto = await capturarFoto(inv.id, "especie", nome, { parcelaId: p.id });
+    if (!nome) { alert("Preencha a espécie antes de adicionar a foto."); return; }
+    const foto = await capturarFoto(inv.id, "especie", nome, { parcelaId: p.id, galeria });
     if (foto) { adicionarEspecie(inv, nome); await salvarJa(); }
   };
+  $("#i-foto").onclick = () => fotoInd(false);
+  $("#i-gal").onclick = () => fotoInd(true);
   $("#add-fuste").onclick = async () => { ind.fustes.push(novoFuste()); await salvarJa(); renderFustes(); volVivo(); };
   $("#del-ind").onclick = async () => {
     if (confirm("Excluir este indivíduo?")) {
@@ -1291,28 +1294,35 @@ const coordTexto = (lat, lon) => (lat == null || lon == null) ? ""
 function dataTexto(ms) { try { return new Date(ms).toLocaleString("pt-BR"); } catch (e) { return ""; } }
 
 // Abre a câmera, comprime e salva a foto. inp.click() roda no gesto do toque.
+// extra.galeria=true → escolher da galeria (sem forçar câmera) e VÁRIAS de uma vez.
+// caso contrário, abre a câmera (1 foto). Salva todas; resolve a última (pra re-render).
 function capturarFoto(invId, tipo, refKey, extra = {}) {
   return new Promise((resolve) => {
     const inp = document.createElement("input");
     inp.type = "file";
     inp.accept = "image/*";
-    inp.setAttribute("capture", "environment");
+    if (extra.galeria) inp.multiple = true;
+    else inp.setAttribute("capture", "environment");
     inp.onchange = async () => {
-      const file = inp.files && inp.files[0];
-      if (!file) return resolve(null);
-      try {
-        const blob = await comprimirImagem(file);
-        const foto = {
-          id: "foto_" + Date.now().toString(36) + "_" + Math.floor(Math.random() * 1e9).toString(36),
-          invId, tipo, refKey, blob,
-          lat: extra.lat ?? null, lon: extra.lon ?? null,
-          parcelaId: extra.parcelaId ?? null,   // fotos de espécie: em qual parcela foi tirada ("" = avulsa)
-          categoria: extra.categoria ?? null,   // fotos de parcela: Geral/Serrapilheira/Dossel/Sub-bosque
-          capturadaEm: Date.now(),
-        };
-        await db.salvarFoto(foto);
-        resolve(foto);
-      } catch (e) { alert("Erro ao processar a foto: " + (e?.message || e)); resolve(null); }
+      const files = [...(inp.files || [])];
+      if (!files.length) return resolve(null);
+      let ultima = null;
+      for (const file of files) {
+        try {
+          const blob = await comprimirImagem(file);
+          const foto = {
+            id: "foto_" + Date.now().toString(36) + "_" + Math.floor(Math.random() * 1e9).toString(36),
+            invId, tipo, refKey, blob,
+            lat: extra.lat ?? null, lon: extra.lon ?? null,
+            parcelaId: extra.parcelaId ?? null,
+            categoria: extra.categoria ?? null,
+            capturadaEm: Date.now(),
+          };
+          await db.salvarFoto(foto);
+          ultima = foto;
+        } catch (e) { alert("Erro ao processar a foto: " + (e?.message || e)); }
+      }
+      resolve(ultima);
     };
     inp.click();
   });
@@ -1476,7 +1486,10 @@ async function telaEspecie(invId, nome) {
       <div class="info">${ocorre.length
         ? "Ocorre em: <b>" + esc(ocorre.join(", ")) + "</b>"
         : "Espécie avulsa — não registrada em parcelas (ex.: herbácea / fora das parcelas)."}</div>
-      <button class="btn-grande" id="esp-foto">📷 Tirar foto avulsa</button>
+      <div class="acoes-linha">
+        <button class="btn-grande" id="esp-foto">📷 Foto avulsa</button>
+        <button class="btn-sec" id="esp-gal">🖼️ Galeria</button>
+      </div>
       <h3>Fotos por parcela</h3>
       <div class="cards">${pastasHtml}</div>
     </main>`;
@@ -1499,11 +1512,13 @@ async function telaEspecie(invId, nome) {
       agendarSalvar();
     };
   });
-  $("#esp-foto").onclick = async () => {
+  const fotoAvulsa = async (galeria) => {
     const nomeUse = $("#esp-nome").value.trim() || nomeAtual;
-    const foto = await capturarFoto(invId, "especie", nomeUse, { parcelaId: "" });
+    const foto = await capturarFoto(invId, "especie", nomeUse, { parcelaId: "", galeria });
     if (foto) { adicionarEspecie(inv, nomeUse); await salvarJa(); telaEspecie(invId, nomeUse); }
   };
+  $("#esp-foto").onclick = () => fotoAvulsa(false);
+  $("#esp-gal").onclick = () => fotoAvulsa(true);
   $$("[data-pasta]").forEach((el) => { el.onclick = () => telaEspecieFotos(invId, nomeAtual, el.dataset.pasta); });
 }
 
@@ -1527,12 +1542,16 @@ async function telaEspecieFotos(invId, nome, parcelaKey) {
     corpo = CATEGORIAS_ESP.map((cat) => {
       const fc = fotos.filter((f) => (f.categoria || "Geral") === cat);
       return `<div class="cat-sec">
-        <div class="cat-head"><b>${cat}</b><button class="btn-foto" data-cat="${esc(cat)}" title="Foto em ${esc(cat)}">📷</button></div>
+        <div class="cat-head"><b>${cat}</b>
+          <span class="cat-acoes"><button class="btn-foto" data-cat="${esc(cat)}" title="Tirar foto">📷</button>
+          <button class="btn-foto" data-cat-gal="${esc(cat)}" title="Importar da galeria">🖼️</button></span></div>
         ${fc.length ? galeriaHTML(fc) : '<p class="vazio-min">— sem fotos</p>'}
       </div>`;
     }).join("");
   } else {
-    corpo = `<button class="btn-grande" id="ef-foto">📷 Tirar foto aqui</button>
+    corpo = `<div class="acoes-linha">
+        <button class="btn-grande" id="ef-foto">📷 Tirar foto</button>
+        <button class="btn-sec" id="ef-gal">🖼️ Galeria</button></div>
       <div id="ef-galeria">${galeriaHTML(fotos)}</div>`;
   }
 
@@ -1556,10 +1575,20 @@ async function telaEspecieFotos(invId, nome, parcelaKey) {
         if (foto) telaEspecieFotos(invId, nome, parcelaKey);
       };
     });
+    $$("[data-cat-gal]").forEach((el) => {
+      el.onclick = async () => {
+        const foto = await capturarFoto(invId, "especie", nome, { parcelaId: parcelaKey, categoria: el.dataset.catGal, galeria: true });
+        if (foto) telaEspecieFotos(invId, nome, parcelaKey);
+      };
+    });
     ligarDelFoto("main", () => telaEspecieFotos(invId, nome, parcelaKey));
   } else {
     $("#ef-foto").onclick = async () => {
       const foto = await capturarFoto(invId, "especie", nome, { parcelaId: parcelaKey });
+      if (foto) telaEspecieFotos(invId, nome, parcelaKey);
+    };
+    $("#ef-gal").onclick = async () => {
+      const foto = await capturarFoto(invId, "especie", nome, { parcelaId: parcelaKey, galeria: true });
       if (foto) telaEspecieFotos(invId, nome, parcelaKey);
     };
     ligarDelFoto("#ef-galeria", () => telaEspecieFotos(invId, nome, parcelaKey));
@@ -1583,19 +1612,27 @@ async function telaFotosParcela(parcelaId) {
   const secoes = CATEGORIAS_FOTO.map((cat) => {
     const fc = fotos.filter((f) => (f.categoria || "Geral") === cat);
     return `<div class="cat-sec">
-      <div class="cat-head"><b>${cat}</b><button class="btn-foto" data-cat="${cat}">📷</button></div>
+      <div class="cat-head"><b>${cat}</b>
+        <span class="cat-acoes"><button class="btn-foto" data-cat="${cat}" title="Tirar foto">📷</button>
+        <button class="btn-foto" data-cat-gal="${cat}" title="Importar da galeria">🖼️</button></span></div>
       ${fc.length ? galeriaHTML(fc) : '<p class="vazio-min">— sem fotos</p>'}
     </div>`;
   }).join("");
   app.innerHTML = `${header("Fotos · " + (p.rotulo || "parcela"), () => telaParcelasDoEstrato(p.estratoId))}
     <main>
-      <div class="info">Escolha o tipo e toque em 📷. Nome, coordenadas e data são carimbados <b>só na exportação</b>.</div>
+      <div class="info">📷 tira na hora · 🖼️ importa da galeria. Nome, coordenadas e data são carimbados <b>só na exportação</b>.</div>
       ${secoes}
     </main>`;
   ligarVoltar(() => telaParcelasDoEstrato(p.estratoId));
   $$("[data-cat]").forEach((el) => {
     el.onclick = async () => {
       const foto = await capturarFoto(inv.id, "parcela", parcelaId, { ...ultimaCoord, categoria: el.dataset.cat });
+      if (foto) telaFotosParcela(parcelaId);
+    };
+  });
+  $$("[data-cat-gal]").forEach((el) => {
+    el.onclick = async () => {
+      const foto = await capturarFoto(inv.id, "parcela", parcelaId, { ...ultimaCoord, categoria: el.dataset.catGal, galeria: true });
       if (foto) telaFotosParcela(parcelaId);
     };
   });
@@ -1734,6 +1771,43 @@ function lonLatParaTile(lon, lat, z) {
   return { x: clamp(x), y: clamp(y) };
 }
 
+// Lê o doc.kml de dentro de um KMZ (zip). Parseia a central directory e descomprime
+// com DecompressionStream (deflate-raw). Retorna o texto do KML.
+async function kmlDeKMZ(arrayBuffer) {
+  const u8 = new Uint8Array(arrayBuffer), dv = new DataView(arrayBuffer), td = new TextDecoder();
+  let eocd = -1;
+  for (let i = u8.length - 22; i >= 0; i--) { if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; } }
+  if (eocd < 0) throw new Error("KMZ inválido (sem diretório do zip)");
+  const cdOffset = dv.getUint32(eocd + 16, true);
+  const cdCount = dv.getUint16(eocd + 10, true);
+  let p = cdOffset, escolhido = null;
+  for (let n = 0; n < cdCount && dv.getUint32(p, true) === 0x02014b50; n++) {
+    const method = dv.getUint16(p + 10, true);
+    const compSize = dv.getUint32(p + 20, true);
+    const nameLen = dv.getUint16(p + 28, true);
+    const extraLen = dv.getUint16(p + 30, true);
+    const commentLen = dv.getUint16(p + 32, true);
+    const lho = dv.getUint32(p + 42, true);
+    const name = td.decode(u8.subarray(p + 46, p + 46 + nameLen));
+    if (/\.kml$/i.test(name)) {
+      const cand = { name, method, compSize, lho };
+      if (/(^|\/)doc\.kml$/i.test(name) || !escolhido) escolhido = cand; // prefere doc.kml
+    }
+    p += 46 + nameLen + extraLen + commentLen;
+  }
+  if (!escolhido) throw new Error("nenhum .kml dentro do KMZ");
+  const lNameLen = dv.getUint16(escolhido.lho + 26, true);
+  const lExtraLen = dv.getUint16(escolhido.lho + 28, true);
+  const dataStart = escolhido.lho + 30 + lNameLen + lExtraLen;
+  const comp = u8.subarray(dataStart, dataStart + escolhido.compSize);
+  if (escolhido.method === 0) return td.decode(comp);
+  if (escolhido.method === 8) {
+    const ds = new DecompressionStream("deflate-raw");
+    return await new Response(new Blob([comp]).stream().pipeThrough(ds)).text();
+  }
+  throw new Error("compressão do KMZ não suportada");
+}
+
 async function telaCenso(estratoId, modo = "censo") {
   if (!inv) return telaInventarios();
   const ehFitos = modo === "fitos";
@@ -1775,7 +1849,7 @@ async function telaCenso(estratoId, modo = "censo") {
         <button class="censo-fab" id="censo-importar" title="Importar KML (ADA…)">📂</button>
         <button class="censo-fab" id="censo-baixar" title="Baixar área offline">⬇</button>
       </div>
-      <input type="file" id="kml-file" accept=".kml,application/vnd.google-earth.kml+xml" hidden>
+      <input type="file" id="kml-file" accept=".kml,.kmz,application/vnd.google-earth.kml+xml,application/vnd.google-earth.kmz" hidden>
       <button class="censo-fab censo-centrar-fixo" id="censo-centrar" title="Centralizar em mim">🎯</button>
       ${ehFitos
         ? '<button class="btn-grande destaque censo-add-fixo" id="censo-add-fito">✏️ Desenhar fito</button>'
@@ -2323,14 +2397,16 @@ async function telaCenso(estratoId, modo = "censo") {
   $("#kml-file").onchange = async (e) => {
     const file = e.target.files && e.target.files[0]; if (!file) return;
     try {
-      const geoms = parseKML(await file.text());
-      if (!geoms.length) { alert("Não achei geometrias (polígono/linha/ponto) nesse KML."); e.target.value = ""; return; }
+      const ehKmz = /\.kmz$/i.test(file.name);
+      const texto = ehKmz ? await kmlDeKMZ(await file.arrayBuffer()) : await file.text();
+      const geoms = parseKML(texto);
+      if (!geoms.length) { alert("Não achei geometrias (polígono/linha/ponto) nesse arquivo."); e.target.value = ""; return; }
       inv.geoRefs.push(...geoms.map((g) => ({ ...g, fonte: file.name })));
       await salvarJa(); renderReferencias();
       const first = geoms.find((g) => g.coords.length > 1);
       if (first) map.fitBounds(L.latLngBounds(first.coords));
       alert(`Importado: ${geoms.length} feição(ões) de ${file.name}. Toque numa referência pra editar (nome/cor) ou remover.`);
-    } catch (err) { alert("Erro ao ler KML: " + (err?.message || err)); }
+    } catch (err) { alert("Erro ao ler o arquivo: " + (err?.message || err)); }
     e.target.value = "";
   };
 
@@ -2386,6 +2462,7 @@ async function telaCenso(estratoId, modo = "censo") {
       <div class="censo-form-top">
         <b>${ehNovo ? "Novo ponto" : "Editar ponto"}</b>
         <span class="censo-form-coord">${pt.lat != null ? fmtCoordDec(pt.lat, pt.lon) : "sem coord"}</span>
+        <button class="btn-foto" id="cf-mover" title="Mover ponto pra mira do mapa">📍</button>
         <button class="btn-foto" id="cf-fechar">✕</button>
       </div>
       <label class="campo">Placa<input id="cf-placa" value="${esc(pt.placa)}" inputmode="numeric"></label>
@@ -2395,7 +2472,6 @@ async function telaCenso(estratoId, modo = "censo") {
           <button type="button" class="ac-toggle" id="cf-esp-toggle">▾</button>
           <div class="ac-lista" id="cf-esp-lista" hidden></div>
         </div></label>
-      <button class="btn-sec largo" id="cf-mover">📍 Mover ponto pra mira do mapa</button>
       <h3>Fustes <small>(CAP cm · altura m)</small></h3>
       <div id="cf-fustes">${fustesHtml()}</div>
       <button class="btn-sec" id="cf-addfuste">+ Fuste</button>

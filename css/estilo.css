@@ -251,6 +251,7 @@ input:focus, select:focus, textarea:focus { outline: 3px solid var(--verde-claro
 .foto-del { position: absolute; top: 4px; right: 4px; background: var(--erro-fg); color: #fff;
   border: 0; width: 28px; height: 28px; border-radius: 50%; font-size: 14px; line-height: 1; }
 .cat-sec, .conama-param { background: var(--card); border: 1.5px solid var(--borda); border-radius: var(--r); padding: var(--e2) var(--e3); margin-bottom: var(--e1); }
+.cat-acoes { display: flex; gap: 6px; flex: 0 0 auto; }
 
 /* ---------- estrato herbáceo (Braun-Blanquet) ---------- */
 .tag-herb { background: #DCEDC8; color: #33691E; }
