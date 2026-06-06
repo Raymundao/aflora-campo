@@ -22,7 +22,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v35"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v36"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -1609,6 +1609,17 @@ async function exportarZipParcelas(invId) {
 // distância/rumo ao vivo, criar pontos georreferenciados, baixar área offline.
 // ============================================================
 const TILE_ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+// Google: endpoint não-oficial (sem chave). Host fixo (mt1) pra o pré-download
+// casar com o que o Leaflet pede (sem subdomínio rotativo). lyrs=s satélite, y híbrido.
+const TILE_GSAT = "https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}";
+const TILE_GHIB = "https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}";
+// camadas de satélite oferecidas no seletor (1ª = padrão). maxNativeZoom = até onde
+// existe imagem real; acima disso o Leaflet só amplia (overzoom) pra dar mais zoom.
+const CAMADAS_SAT = [
+  { nome: "Google Satélite", url: TILE_GSAT, maxNativeZoom: 20 },
+  { nome: "Google Híbrido (nomes)", url: TILE_GHIB, maxNativeZoom: 20 },
+  { nome: "Esri (reserva)", url: TILE_ESRI, maxNativeZoom: 19 },
+];
 let _mapa = null, _watchId = null;
 
 function destruirMapa() {
@@ -1673,9 +1684,22 @@ async function telaCenso(estratoId) {
   let centro = [-19.65, -43.9];
   const comCoord = est.pontos.filter((p) => p.lat != null);
   if (comCoord.length) centro = [comCoord[comCoord.length - 1].lat, comCoord[comCoord.length - 1].lon];
-  const map = L.map("mapa", { zoomControl: true, attributionControl: false }).setView(centro, 17);
+  const map = L.map("mapa", { zoomControl: true, attributionControl: false, maxZoom: 21 }).setView(centro, 17);
   _mapa = map;
-  L.tileLayer(TILE_ESRI, { maxZoom: 19, maxNativeZoom: 19 }).addTo(map);
+  // camadas de satélite + seletor (igual "Mapas disponíveis" do AlpineQuest).
+  // tileTemplate guarda a URL da camada ativa pro pré-download de área.
+  let tileTemplate = CAMADAS_SAT[0].url;
+  const baseLayers = {};
+  CAMADAS_SAT.forEach((c, i) => {
+    const layer = L.tileLayer(c.url, { maxZoom: 21, maxNativeZoom: c.maxNativeZoom });
+    baseLayers[c.nome] = layer;
+    if (i === 0) layer.addTo(map);
+  });
+  L.control.layers(baseLayers, null, { collapsed: true }).addTo(map);
+  map.on("baselayerchange", (ev) => {
+    const c = CAMADAS_SAT.find((x) => x.nome === ev.name);
+    if (c) tileTemplate = c.url;
+  });
   setTimeout(() => map.invalidateSize(), 120); // o container acabou de entrar no DOM
 
   let userLatLng = null, userAlt = null, userAcc = null, userMarker = null, linha = null;
@@ -1799,7 +1823,9 @@ async function telaCenso(estratoId) {
       const t1 = lonLatParaTile(b.getWest(), b.getNorth(), z);
       const t2 = lonLatParaTile(b.getEast(), b.getSouth(), z);
       for (let x = t1.x; x <= t2.x; x++) {
-        for (let y = t1.y; y <= t2.y; y++) urls.push(TILE_ESRI.replace("{z}", z).replace("{x}", x).replace("{y}", y));
+        for (let y = t1.y; y <= t2.y; y++) {
+          urls.push(tileTemplate.replace("{z}", z).replace("{x}", x).replace("{y}", y));
+        }
       }
     }
     if (urls.length > 2000 && !confirm(`Essa área tem ${urls.length} tiles (pode demorar/pesar). Aproxime o zoom pra baixar menos, ou continue assim mesmo?`)) return;
