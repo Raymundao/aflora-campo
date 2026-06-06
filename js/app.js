@@ -19,7 +19,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v30"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v31"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -959,6 +959,11 @@ function telaParcelaHerbaceo(parcelaId) {
       </div>
       <button class="btn-sec largo" id="p-fotos">📷 Fotos da parcela</button>
       <h3>Cobertura — táxons <small>(escala Braun-Blanquet · ID a gênero)</small></h3>
+      <details class="bb-legenda">
+        <summary>ⓘ escala de cobertura Braun-Blanquet</summary>
+        <ul>${BB_CLASSES.map((bb) => `<li><b>${bb}</b> — ${esc(BB_DESC[bb])}</li>`).join("")}</ul>
+        <small>r/+ = quase nada (conta indivíduos); 1–5 = quanto do quadrado a espécie cobre vista de cima.</small>
+      </details>
       <div id="taxons"></div>
       <button class="btn-grande" id="add-tax">+ Adicionar táxon</button>
     </main>`;
@@ -981,6 +986,8 @@ function telaParcelaHerbaceo(parcelaId) {
       renderResumoH();
       return;
     }
+    // Cobertura e Origem ficam COLAPSADAS num botão (mostra a escolha); tocar abre
+    // as opções, escolher fecha de volta — tela limpa com vários táxons.
     box.innerHTML = p.taxons.map((t, i) => `<div class="taxon-card">
       <div class="taxon-top">
         <div class="autocomplete">
@@ -990,13 +997,19 @@ function telaParcelaHerbaceo(parcelaId) {
         </div>
         <button class="btn-foto perigo-icone t-del" data-i="${i}" title="Excluir táxon">🗑</button>
       </div>
-      <div class="taxon-linha"><span class="taxon-rot">Cobertura</span>
-        <div class="bb-opts">${BB_CLASSES.map((bb) =>
-          `<button class="bb-opt ${t.bb === bb ? "sel" : ""}" data-i="${i}" data-bb="${bb}" title="${esc(BB_DESC[bb])}">${bb}</button>`).join("")}</div>
-      </div>
-      <div class="taxon-linha"><span class="taxon-rot">Origem</span>
-        <div class="bb-opts">${ORIGENS_HERB.map((o) =>
-          `<button class="orig-opt ${t.origem === o ? "sel" : ""}" data-i="${i}" data-orig="${esc(o)}">${esc(o)}</button>`).join("")}</div>
+      <div class="taxon-linha">
+        <div class="sel-campo">
+          <button class="sel-btn ${t.bb ? "ok" : ""}" data-toggle="bb" data-i="${i}">Cobertura <b>${t.bb || "—"}</b> <span class="seta">▾</span></button>
+          <div class="sel-opts" data-campo="bb" data-i="${i}" hidden>
+            ${BB_CLASSES.map((bb) => `<button class="bb-opt-full ${t.bb === bb ? "sel" : ""}" data-i="${i}" data-bb="${bb}"><b>${bb}</b><span>${esc(BB_DESC[bb])}</span></button>`).join("")}
+          </div>
+        </div>
+        <div class="sel-campo">
+          <button class="sel-btn ${t.origem ? "ok" : ""}" data-toggle="orig" data-i="${i}">Origem <b>${esc(t.origem || "—")}</b> <span class="seta">▾</span></button>
+          <div class="sel-opts" data-campo="orig" data-i="${i}" hidden>
+            ${ORIGENS_HERB.map((o) => `<button class="orig-opt larga ${t.origem === o ? "sel" : ""}" data-i="${i}" data-orig="${esc(o)}">${esc(o)}</button>`).join("")}
+          </div>
+        </div>
       </div>
     </div>`).join("");
     $$(".t-nome", box).forEach((el) => { el.oninput = () => { p.taxons[+el.dataset.i].nome = el.value; agendarSalvar(); }; });
@@ -1007,21 +1020,26 @@ function telaParcelaHerbaceo(parcelaId) {
       ligarAutocomplete(input, toggle, lista, () => taxonsDoEstrato(inv, p.estratoId),
         (nome) => { p.taxons[i].nome = nome; agendarSalvar(); });
     });
-    // BB e origem: toggle em-lugar (preserva foco, sem re-render pesado)
-    $$(".bb-opt", box).forEach((el) => {
+    // abre/fecha o seletor de cobertura ou origem
+    $$(".sel-btn", box).forEach((el) => {
+      el.onclick = () => {
+        const panel = box.querySelector(`.sel-opts[data-campo="${el.dataset.toggle}"][data-i="${el.dataset.i}"]`);
+        if (panel) panel.hidden = !panel.hidden;
+      };
+    });
+    // escolher cobertura/origem → grava e re-renderiza (fecha o seletor, atualiza o rótulo)
+    $$(".bb-opt-full", box).forEach((el) => {
       el.onclick = () => {
         const i = +el.dataset.i;
         p.taxons[i].bb = (p.taxons[i].bb === el.dataset.bb) ? null : el.dataset.bb;
-        box.querySelectorAll(`.bb-opt[data-i="${i}"]`).forEach((x) => x.classList.toggle("sel", x.dataset.bb === p.taxons[i].bb));
-        agendarSalvar();
+        agendarSalvar(); renderTaxons();
       };
     });
     $$(".orig-opt", box).forEach((el) => {
       el.onclick = () => {
         const i = +el.dataset.i;
         p.taxons[i].origem = (p.taxons[i].origem === el.dataset.orig) ? null : el.dataset.orig;
-        box.querySelectorAll(`.orig-opt[data-i="${i}"]`).forEach((x) => x.classList.toggle("sel", x.dataset.orig === p.taxons[i].origem));
-        agendarSalvar();
+        agendarSalvar(); renderTaxons();
       };
     });
     $$(".t-del", box).forEach((el) => {

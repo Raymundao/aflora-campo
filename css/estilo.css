@@ -253,13 +253,34 @@ input:focus, select:focus, textarea:focus { outline: 3px solid var(--verde-claro
 .taxon-top .t-del { flex: 0 0 auto; min-width: 44px; }
 .taxon-linha { display: flex; align-items: center; gap: var(--e2); margin-top: var(--e1); flex-wrap: wrap; }
 .taxon-rot { font-size: var(--fs-leg); color: var(--texto-fraco); font-weight: 600; flex: 0 0 70px; }
-.bb-opts { display: flex; gap: 5px; flex-wrap: wrap; flex: 1; }
-.bb-opt { min-width: 40px; min-height: 44px; background: var(--card); border: 2px solid var(--borda);
-  border-radius: var(--r-sm); color: var(--texto); font-weight: 700; font-size: var(--fs-corpo); padding: 6px; }
-.bb-opt.sel { border-color: var(--verde); background: var(--ok-bg); color: var(--ok-fg); }
+.taxon-linha { align-items: flex-start; }
+/* botão colapsado que mostra a escolha (Cobertura / Origem) */
+.sel-campo { flex: 1; min-width: 0; }
+.sel-btn { width: 100%; min-height: 46px; background: var(--card); border: 2px solid var(--borda);
+  border-radius: var(--r-sm); color: var(--texto-fraco); font-weight: 600; font-size: var(--fs-leg);
+  padding: 8px 10px; text-align: left; display: flex; align-items: center; gap: 5px; }
+.sel-btn b { color: var(--texto); font-size: var(--fs-corpo); margin-left: auto; }
+.sel-btn .seta { color: var(--verde); font-weight: 700; }
+.sel-btn.ok { border-color: var(--verde-claro); }
+.sel-opts { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 5px; }
+/* opções de cobertura abertas — classe + faixa (legenda no próprio botão) */
+.bb-opt-full { flex: 1 1 46%; min-height: 50px; background: var(--card); border: 2px solid var(--borda);
+  border-radius: var(--r-sm); padding: 6px 8px; display: flex; flex-direction: column; gap: 1px; text-align: left; }
+.bb-opt-full b { font-size: var(--fs-corpo); color: var(--texto); }
+.bb-opt-full span { font-size: 11px; color: var(--texto-fraco); }
+.bb-opt-full.sel { border-color: var(--verde); background: var(--ok-bg); }
 .orig-opt { flex: 1; min-width: 80px; min-height: 44px; background: var(--card); border: 2px solid var(--borda);
   border-radius: var(--r-sm); color: var(--texto); font-weight: 700; font-size: var(--fs-leg); padding: 6px 8px; }
+.orig-opt.larga { flex: 1 1 30%; }
 .orig-opt.sel { border-color: var(--verde); background: var(--ok-bg); color: var(--ok-fg); }
+/* legenda BB (details) */
+.bb-legenda { background: var(--card); border: 1.5px solid var(--borda); border-radius: var(--r); padding: var(--e1) var(--e3); margin-bottom: var(--e1); }
+.bb-legenda summary { font-size: var(--fs-leg); color: var(--verde-700); font-weight: 700; cursor: pointer; list-style: none; padding: 4px 0; }
+.bb-legenda summary::-webkit-details-marker { display: none; }
+.bb-legenda ul { margin: var(--e1) 0; padding-left: var(--e3); font-size: var(--fs-leg); color: var(--texto-fraco); }
+.bb-legenda li { margin-bottom: 2px; }
+.bb-legenda li b { color: var(--texto); display: inline-block; min-width: 18px; }
+.bb-legenda small { color: var(--texto-fraco); font-size: 12px; }
 
 /* ---------- CONAMA ---------- */
 .conama-opts { display: flex; gap: var(--e1); flex-wrap: wrap; }
