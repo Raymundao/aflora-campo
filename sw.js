@@ -1,6 +1,6 @@
 // Service worker — cache offline dos assets do app. Cache-first com atualização
 // em segundo plano. Suba a versão (CACHE) ao alterar arquivos pra forçar refresh.
-const CACHE = "aflora-campo-v31";
+const CACHE = "aflora-campo-v32";
 const ASSETS = [
   "./", "./index.html", "./manifest.webmanifest",
   "./css/estilo.css",
@@ -33,9 +33,13 @@ self.addEventListener("fetch", (e) => {
   if (e.request.method !== "GET") return;
   e.respondWith((async () => {
     const cache = await caches.open(CACHE);
+    // Arquivos do PRÓPRIO app: busca SEMPRE da rede ignorando o cache HTTP do
+    // navegador (cache:"no-store") — assim atualização chega no campo de verdade,
+    // sem ficar presa no cache teimoso do Android. Offline cai pro cache do SW.
+    const mesmaOrigem = new URL(e.request.url).origin === self.location.origin;
     try {
       const resp = await Promise.race([
-        fetch(e.request),
+        fetch(e.request, mesmaOrigem ? { cache: "no-store" } : undefined),
         new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 3000)),
       ]);
       if (resp && resp.status === 200 && resp.type === "basic") cache.put(e.request, resp.clone());
