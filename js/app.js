@@ -24,7 +24,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v50"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v51"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -1930,7 +1930,11 @@ async function telaCenso(estratoId, modo = "censo") {
   else if (inv.geoRefs[0]?.coords?.[0]) centro = inv.geoRefs[0].coords[0];
   // rotate:true (plugin leaflet-rotate) permite girar o mapa quando a bússola liga.
   // fadeAnimation:false → tiles entram secos (sem fade) = some o "fantasma/sombra" no zoom.
-  const map = L.map("mapa", { zoomControl: false, attributionControl: false, maxZoom: 21, rotate: true, rotateControl: false, touchRotate: false, fadeAnimation: false }).setView(centro, 17);
+  // zoomAnimation:false → zoom é instantâneo (sem transição de 250ms). Necessário porque
+  // o leaflet-rotate transforma errado as camadas (linha de medição) durante a animação
+  // do zoom → a régua "congelava" no tamanho antigo e ficava longe da mira no zoom-out.
+  // Sem animação, a linha é redesenhada na hora, sempre colada na mira (estilo AlpineQuest).
+  const map = L.map("mapa", { zoomControl: false, attributionControl: false, maxZoom: 21, rotate: true, rotateControl: false, touchRotate: false, fadeAnimation: false, zoomAnimation: false }).setView(centro, 17);
   L.control.zoom({ position: "bottomleft" }).addTo(map);
   _mapa = map;
   // camadas de satélite + seletor (igual "Mapas disponíveis" do AlpineQuest).
