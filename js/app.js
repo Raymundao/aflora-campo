@@ -24,7 +24,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v49"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v50"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -1808,6 +1808,26 @@ async function kmlDeKMZ(arrayBuffer) {
   throw new Error("compressão do KMZ não suportada");
 }
 
+// Preenche um indivíduo do censo a partir do nome do placemark importado.
+// Reconhece o formato que o próprio app exporta ("Placa | Espécie | CAP 45+30 | H 8/7");
+// sem "|", joga o texto todo na placa (o que importa é a coordenada).
+function preencherPontoDoNome(pt, nome) {
+  nome = (nome || "").trim();
+  if (!nome) return;
+  if (nome.includes("|")) {
+    const partes = nome.split("|").map((s) => s.trim());
+    pt.placa = partes[0] || "";
+    pt.especie = partes[1] || "";
+    const capStr = (partes.find((p) => /^cap/i.test(p)) || "").replace(/cap/i, "").trim();
+    const hStr = (partes.find((p) => /^h\b/i.test(p)) || "").replace(/^h/i, "").trim();
+    const caps = capStr.split("+").map((s) => parseFloat(s.replace(",", "."))).filter((v) => !Number.isNaN(v));
+    const hs = hStr.split("/").map((s) => parseFloat(s.replace(",", "."))).filter((v) => !Number.isNaN(v));
+    if (caps.length) pt.fustes = caps.map((c, i) => ({ capCm: c, alturaM: hs[i] ?? hs[0] ?? null }));
+  } else {
+    pt.placa = nome;
+  }
+}
+
 async function telaCenso(estratoId, modo = "censo") {
   if (!inv) return telaInventarios();
   const ehFitos = modo === "fitos";
@@ -2418,7 +2438,21 @@ async function telaCenso(estratoId, modo = "censo") {
     $("#ref-del").onclick = async () => { if (!confirm(`Remover a referência "${r.nome || r.tipo}"?`)) return; inv.geoRefs = inv.geoRefs.filter((x) => x !== r); await salvarJa(); fechar(); renderReferencias(); };
   }
   renderReferencias();
-  $("#censo-importar").onclick = () => $("#kml-file").click();
+  // importar KML/KMZ. No censo, pergunta antes: virar INDIVÍDUOS (dados) ou só REFERÊNCIA (ver).
+  // Nas fitofisionomias só faz sentido como referência.
+  let importMode = "ref";
+  $("#censo-importar").onclick = () => {
+    if (ehFitos || !est) { importMode = "ref"; $("#kml-file").click(); return; }
+    const barra = $("#censo-barra"); barra.hidden = false; mostrarAdd(false);
+    barra.innerHTML = `<span class="barra-tit">Importar KML/KMZ como:</span>
+      <button class="btn-sec" id="imp-dados">📍 Pontos do censo (dados)</button>
+      <button class="btn-sec" id="imp-ref">👁️ Só visualizar</button>
+      <button class="btn-foto" id="imp-cancel">✕</button>`;
+    const fechar = () => { barra.hidden = true; barra.innerHTML = ""; mostrarAdd(true); };
+    $("#imp-dados").onclick = () => { importMode = "dados"; fechar(); $("#kml-file").click(); };
+    $("#imp-ref").onclick = () => { importMode = "ref"; fechar(); $("#kml-file").click(); };
+    $("#imp-cancel").onclick = fechar;
+  };
   $("#kml-file").onchange = async (e) => {
     const file = e.target.files && e.target.files[0]; if (!file) return;
     try {
@@ -2426,11 +2460,31 @@ async function telaCenso(estratoId, modo = "censo") {
       const texto = ehKmz ? await kmlDeKMZ(await file.arrayBuffer()) : await file.text();
       const geoms = parseKML(texto);
       if (!geoms.length) { alert("Não achei geometrias (polígono/linha/ponto) nesse arquivo."); e.target.value = ""; return; }
-      inv.geoRefs.push(...geoms.map((g) => ({ ...g, fonte: file.name })));
-      await salvarJa(); renderReferencias();
-      const first = geoms.find((g) => g.coords.length > 1);
-      if (first) map.fitBounds(L.latLngBounds(first.coords));
-      alert(`Importado: ${geoms.length} feição(ões) de ${file.name}. Toque numa referência pra editar (nome/cor) ou remover.`);
+      if (importMode === "dados" && est) {
+        // pontos viram INDIVÍDUOS do censo; polígonos/linhas (se houver) ficam como referência
+        const pontos = geoms.filter((g) => g.tipo === "ponto");
+        const outros = geoms.filter((g) => g.tipo !== "ponto");
+        if (!pontos.length) {
+          alert("Esse arquivo não tem pontos pra importar como dados do censo.\nUse \"Só visualizar\" pra trazer polígonos/linhas como referência.");
+          e.target.value = ""; return;
+        }
+        for (const g of pontos) {
+          const [lat, lon] = g.coords[0];
+          const pt = novoPontoCenso(lat, lon, null);
+          preencherPontoDoNome(pt, g.nome);
+          est.pontos.push(pt);
+        }
+        if (outros.length) inv.geoRefs.push(...outros.map((g) => ({ ...g, fonte: file.name })));
+        await salvarJa(); renderPontos(); if (outros.length) renderReferencias();
+        map.fitBounds(L.latLngBounds(pontos.map((g) => g.coords[0])));
+        alert(`Importados ${pontos.length} ponto(s) como indivíduos do censo` + (outros.length ? ` + ${outros.length} feição(ões) de referência` : "") + `.\nToque num ponto pra conferir/ajustar placa, espécie e CAP.`);
+      } else {
+        inv.geoRefs.push(...geoms.map((g) => ({ ...g, fonte: file.name })));
+        await salvarJa(); renderReferencias();
+        const first = geoms.find((g) => g.coords.length > 1) || geoms[0];
+        if (first) map.fitBounds(L.latLngBounds(first.coords));
+        alert(`Importado: ${geoms.length} feição(ões) de ${file.name}. Toque numa referência pra editar (nome/cor) ou remover.`);
+      }
     } catch (err) { alert("Erro ao ler o arquivo: " + (err?.message || err)); }
     e.target.value = "";
   };
