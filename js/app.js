@@ -24,7 +24,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v63"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v64"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -1774,6 +1774,27 @@ const CAMADAS_SAT = [
 ];
 let _mapa = null, _watchId = null, _orientHandler = null;
 
+// Wake Lock: mantém a TELA ligada enquanto grava trilha (com a tela apagada o
+// navegador suspende o GPS e a gravação para). Re-pede ao voltar pro app.
+// OBS importante: PWA NÃO grava com o app minimizado / tela apagada de verdade —
+// isso só impede a tela de apagar pra a gravação não ser interrompida.
+let _wakeLock = null, _wakeWanted = false;
+async function _adquirirWake() {
+  if (!_wakeWanted || _wakeLock) return;
+  try {
+    if ("wakeLock" in navigator) {
+      _wakeLock = await navigator.wakeLock.request("screen");
+      _wakeLock.addEventListener("release", () => { _wakeLock = null; });
+    }
+  } catch (e) { _wakeLock = null; }
+}
+function manterTelaLigada(on) {
+  _wakeWanted = !!on;
+  if (on) _adquirirWake();
+  else { try { if (_wakeLock) _wakeLock.release(); } catch (e) { /* */ } _wakeLock = null; }
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") _adquirirWake(); });
+
 function destruirMapa() {
   if (_watchId != null && navigator.geolocation) { navigator.geolocation.clearWatch(_watchId); _watchId = null; }
   if (_orientHandler) {
@@ -1781,6 +1802,7 @@ function destruirMapa() {
     window.removeEventListener("deviceorientation", _orientHandler);
     _orientHandler = null;
   }
+  manterTelaLigada(false); // larga o wake lock ao sair do mapa
   if (_mapa) { try { _mapa.remove(); } catch (e) { /* */ } _mapa = null; }
 }
 // distância (m) e rumo (graus) entre dois {lat,lng} — Haversine
@@ -2088,15 +2110,17 @@ async function telaCenso(estratoId, modo = "censo") {
   // redesenha a régua em qualquer mudança de view (pan/zoom/rotação)
   map.on("move zoom zoomend viewreset rotate rotateend resize", atualizarLeitura);
 
-  // rastro recente (breadcrumb): segmentos amarelos que vão sumindo conforme ando.
-  const RASTRO_MAX = 30;
+  // rastro recente (breadcrumb): trilha AZUL atrás de mim que vai sumindo (estilo AlpineQuest).
+  const RASTRO_MAX = 60;
   const rastro = [];
   const rastroLayer = L.layerGroup().addTo(map);
   function desenharRastro() {
     rastroLayer.clearLayers();
     for (let i = 1; i < rastro.length; i++) {
-      const op = (i / rastro.length) * 0.75; // mais novo = mais visível; mais antigo apaga
-      L.polyline([rastro[i - 1], rastro[i]], { color: "#FFC107", weight: 3, opacity: op }).addTo(rastroLayer);
+      const op = 0.25 + (i / rastro.length) * 0.65; // mais novo = mais visível; mais antigo apaga
+      // contorno branco + linha azul (destaca no satélite)
+      L.polyline([rastro[i - 1], rastro[i]], { color: "#fff", weight: 6, opacity: op * 0.5 }).addTo(rastroLayer);
+      L.polyline([rastro[i - 1], rastro[i]], { color: "#1565C0", weight: 4, opacity: op }).addTo(rastroLayer);
     }
   }
 
@@ -2293,6 +2317,7 @@ async function telaCenso(estratoId, modo = "censo") {
   if ($("#censo-trilha")) $("#censo-trilha").onclick = async () => {
     if (!gravando) {
       gravando = true;
+      manterTelaLigada(true); // mantém a tela ligada pra não parar o GPS
       trilhaPts = []; if (trilhaLinha) { trilhaLinha.remove(); trilhaLinha = null; }
       if (userLatLng) trilhaPts.push([userLatLng.lat, userLatLng.lng]);
       $("#censo-trilha").classList.add("ativo");
@@ -2300,6 +2325,7 @@ async function telaCenso(estratoId, modo = "censo") {
       atualizarTrkBanner();
     } else {
       gravando = false;
+      manterTelaLigada(false);
       $("#censo-trilha").classList.remove("ativo");
       if (trilhaPts.length >= 2) {
         const nome = prompt("Nome da trilha:", "Trilha " + (est.trilhas.length + 1));
