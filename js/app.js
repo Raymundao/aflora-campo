@@ -24,7 +24,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v53"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v54"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -232,7 +232,44 @@ const FITO_TIPOS = [
 // estilos de linha (forma) pro dashArray do Leaflet
 const DASH = { solida: null, tracejada: "8,6", pontilhada: "2,7", "traço-ponto": "10,6,2,6" };
 const dashArrayDe = (estilo) => (estilo && estilo in DASH) ? DASH[estilo] : null;
-const FORMAS_PONTO = ["círculo", "quadrado", "losango", "triângulo"];
+const FORMAS_PONTO = ["círculo", "quadrado", "losango", "triângulo", "triângulo ▽", "estrela", "cruz", "x", "pentágono", "hexágono"];
+// desenha a forma de um marcador no canvas, centrada em (x,y), "tamanho" s (px).
+// Centraliza tudo aqui pra os pontos importados e (futuramente) o censo usarem o mesmo.
+function desenharFormaPonto(ctx, x, y, s, forma) {
+  const r = s / 2;
+  const poligonoRegular = (n, rot) => {
+    for (let i = 0; i < n; i++) {
+      const a = rot + (i * 2 * Math.PI) / n;
+      const px = x + r * Math.cos(a), py = y + r * Math.sin(a);
+      i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+    }
+    ctx.closePath();
+  };
+  ctx.beginPath();
+  switch (forma) {
+    case "quadrado": ctx.rect(x - r, y - r, s, s); break;
+    case "losango": ctx.moveTo(x, y - r); ctx.lineTo(x + r, y); ctx.lineTo(x, y + r); ctx.lineTo(x - r, y); ctx.closePath(); break;
+    case "triângulo": ctx.moveTo(x, y - r); ctx.lineTo(x + r, y + r); ctx.lineTo(x - r, y + r); ctx.closePath(); break;
+    case "triângulo ▽": ctx.moveTo(x, y + r); ctx.lineTo(x + r, y - r); ctx.lineTo(x - r, y - r); ctx.closePath(); break;
+    case "pentágono": poligonoRegular(5, -Math.PI / 2); break;
+    case "hexágono": poligonoRegular(6, -Math.PI / 2); break;
+    case "estrela": {
+      for (let i = 0; i < 10; i++) {
+        const rad = i % 2 === 0 ? r : r * 0.45;
+        const a = -Math.PI / 2 + (i * Math.PI) / 5;
+        const px = x + rad * Math.cos(a), py = y + rad * Math.sin(a);
+        i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+      }
+      ctx.closePath(); break;
+    }
+    case "cruz": { const e = r * 0.45; ctx.rect(x - e, y - r, 2 * e, s); ctx.rect(x - r, y - e, s, 2 * e); break; }
+    case "x": { const e = r * 0.30, d = r * 0.95; // duas barras diagonais (X)
+      ctx.save(); ctx.translate(x, y); ctx.rotate(Math.PI / 4);
+      ctx.rect(-e, -d, 2 * e, 2 * d); ctx.rect(-d, -e, 2 * d, 2 * e);
+      ctx.restore(); break; }
+    default: ctx.arc(x, y, r, 0, 2 * Math.PI);
+  }
+}
 // ícone de um ponto de referência (forma + tamanho + cor)
 function iconeRefPonto(forma, tam, cor) {
   const s = Math.max(8, tam || 12);
@@ -284,7 +321,6 @@ async function telaInventario(id) {
   if (inv.config?.especies?.length) { delete inv.config.especies; db.salvarInventario(inv); }
   const resultados = resultadosPorEstrato(inv);
   const fotos = await db.fotosDoInventario(id);
-  const nEspecies = registroEspecies(inv, fotos.filter((f) => f.tipo === "especie").map((f) => f.refKey)).length;
 
   // cada estrato vira um card (erro + completude) → toca pra ver as parcelas dele
   const estratosHtml = resultados.length
@@ -295,8 +331,8 @@ async function telaInventario(id) {
     <main>
       <div class="seg-nav">
         <button class="seg ativo">📋 Parcelas</button>
-        <button class="seg" id="ir-especies">🌿 Espécies${nEspecies ? " (" + nEspecies + ")" : ""}</button>
-        <button class="seg" id="ir-fitos">🗺️ Fitos${(inv.fitos || []).length ? " (" + inv.fitos.length + ")" : ""}</button>
+        <button class="seg" id="ir-especies">🌿 Espécies</button>
+        <button class="seg" id="ir-fitos">🗺️ Mapa</button>
       </div>
       <div class="acoes-linha"><button class="btn-sec largo" id="cfg">⚙ Config (estratos, área, erro)</button></div>
       <div class="cards">${estratosHtml}</div>
@@ -1855,6 +1891,7 @@ async function telaCenso(estratoId, modo = "censo") {
   // tela cheia (estilo AlpineQuest): mapa ocupa tudo, controles flutuam por cima.
   app.innerHTML = `<div class="censo-tela">
       <div id="mapa"></div>
+      <svg class="censo-regua" id="censo-regua" style="display:none"><line x1="0" y1="0" x2="0" y2="0"></line></svg>
       <div class="censo-dot" id="censo-dot"></div>
       <div class="censo-label" id="censo-label" hidden></div>
       <button class="censo-fab censo-voltar" id="censo-voltar" aria-label="Voltar">‹</button>
@@ -1911,14 +1948,10 @@ async function telaCenso(estratoId, modo = "censo") {
         const ctx = this._renderer && this._renderer._ctx;
         if (!ctx || !this._point) return;
         const x = this._point.x, y = this._point.y;
-        const s = this.options.tam || 12, r = s / 2, forma = this.options.forma, cor = this.options.color;
+        const s = this.options.tam || 12, forma = this.options.forma, cor = this.options.color;
         ctx.save();
         ctx.fillStyle = cor; ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
-        ctx.beginPath();
-        if (forma === "quadrado") { ctx.rect(x - r, y - r, s, s); }
-        else if (forma === "losango") { ctx.moveTo(x, y - r); ctx.lineTo(x + r, y); ctx.lineTo(x, y + r); ctx.lineTo(x - r, y); ctx.closePath(); }
-        else if (forma === "triângulo") { ctx.moveTo(x, y - r); ctx.lineTo(x + r, y + r); ctx.lineTo(x - r, y + r); ctx.closePath(); }
-        else { ctx.arc(x, y, r, 0, 2 * Math.PI); }
+        desenharFormaPonto(ctx, x, y, s, forma);
         ctx.fill(); ctx.stroke();
         ctx.restore();
       },
@@ -1939,6 +1972,8 @@ async function telaCenso(estratoId, modo = "censo") {
   // touchRotate:true → girar o mapa com dois dedos (gesto de torção), estilo AlpineQuest.
   const map = L.map("mapa", { zoomControl: false, attributionControl: false, maxZoom: 21, rotate: true, rotateControl: false, touchRotate: true, fadeAnimation: false, zoomAnimation: false }).setView(centro, 17);
   L.control.zoom({ position: "bottomleft" }).addTo(map);
+  // escala adaptativa (só métrica, discreta) — vira referência visual da distância
+  L.control.scale({ position: "bottomleft", metric: true, imperial: false, maxWidth: 110 }).addTo(map);
   _mapa = map;
   // camadas de satélite + seletor (igual "Mapas disponíveis" do AlpineQuest).
   // tileTemplate guarda a URL da camada ativa pro pré-download de área.
@@ -1964,28 +1999,41 @@ async function telaCenso(estratoId, modo = "censo") {
   });
   setTimeout(() => map.invalidateSize(), 120); // o container acabou de entrar no DOM
 
-  let userLatLng = null, userAlt = null, userAcc = null, userMarker = null, linha = null;
+  let userLatLng = null, userAlt = null, userAcc = null, userMarker = null;
   const iconeEu = L.divIcon({ className: "marcador-eu", html: '<div class="cone-eu" hidden></div><div class="dot-eu"></div>', iconSize: [22, 22] });
 
-  // linha fina da minha posição até a mira (bolinha central no DOM) + label na linha
+  // Régua = linha fina da minha posição até a MIRA (centro fixo da tela). Desenhada
+  // como OVERLAY DE TELA (SVG por cima do mapa), não como camada geográfica: assim
+  // ela é redesenhada na hora a cada move/zoom/rotação e fica SEMPRE colada na mira,
+  // sem o atraso/“trava” que o leaflet-rotate causa em camadas geográficas no zoom.
   function atualizarLeitura() {
-    const c = map.getCenter();
-    const lbl = $("#censo-label");
+    const lbl = $("#censo-label"), svg = $("#censo-regua");
     if (!lbl) return;
     if (userLatLng) {
+      const c = map.getCenter();
       const d = distanciaM(userLatLng, c);
       lbl.hidden = false;
       lbl.innerHTML = `<b>${fmtNum(d, 0)} m</b>`;
-      if (!linha) linha = L.polyline([userLatLng, c], { color: "#1565C0", weight: 1.6, opacity: 0.85, dashArray: null }).addTo(map);
-      else linha.setLatLngs([userLatLng, c]);
+      if (svg) {
+        const up = map.latLngToContainerPoint(userLatLng);
+        const sz = map.getSize();
+        const ln = svg.firstChild;
+        ln.setAttribute("x1", up.x); ln.setAttribute("y1", up.y);
+        ln.setAttribute("x2", sz.x / 2); ln.setAttribute("y2", sz.y / 2);
+        svg.style.display = "";
+      }
     } else {
       lbl.hidden = false;
       lbl.innerHTML = "<span>aguardando GPS…</span>";
+      if (svg) svg.style.display = "none";
     }
   }
-  // atualiza a linha/leitura também durante e ao fim do zoom (não só no pan),
-  // senão a linha "trava" enquanto dá zoom-out.
-  map.on("move zoom zoomend viewreset rotate rotateend", atualizarLeitura);
+  // redesenha a régua em qualquer mudança de view (pan/zoom/rotação)
+  map.on("move zoom zoomend viewreset rotate rotateend resize", atualizarLeitura);
+  // o renderer canvas (pontos) não acompanha a rotação ao vivo no leaflet-rotate:
+  // os pontos “escorregavam” durante o giro e só voltavam ao soltar. Redesenhar o
+  // canvas a cada evento de rotação mantém os pontos colados no lugar.
+  map.on("rotate rotateend", () => { if (rendererPontos && rendererPontos._update) rendererPontos._update(); });
 
   // rastro recente (breadcrumb): segmentos amarelos que vão sumindo conforme ando.
   const RASTRO_MAX = 30;
