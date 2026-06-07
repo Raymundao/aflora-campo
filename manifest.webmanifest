@@ -1,7 +1,7 @@
 {
-  "name": "Inventário — Brasil Aflora",
-  "short_name": "Inventário",
-  "description": "Coleta de parcelas e cálculo de erro amostral em tempo real, offline.",
+  "name": "Aflora Campo",
+  "short_name": "Aflora Campo",
+  "description": "Levantamento de flora em campo: parcelas, censo, herbáceo e mapas — em tempo real e offline.",
   "lang": "pt-BR",
   "start_url": "./",
   "scope": "./",
