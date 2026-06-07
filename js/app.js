@@ -24,7 +24,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v56"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v57"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -1920,6 +1920,12 @@ async function telaCenso(estratoId, modo = "censo") {
   // pontos do censo em CANVAS (não DOM) — aguenta milhares sem travar, igual AlpineQuest.
   // 1 renderer canvas pra todos; classe que desenha o círculo + a placa no próprio canvas.
   const rendererPontos = L.canvas({ padding: 0.5 });
+  // CORREÇÃO do bug de "pontos escorregando" no zoom/pinça: o leaflet-rotate aplica
+  // uma transformação CSS errada no canvas durante o gesto (_onZoom → _updateTransform).
+  // Sobrescrevo _onZoom pra REPROJETAR de verdade (_reset redesenha os pontos nas
+  // posições corretas a cada frame). Tem que ser ANTES do renderer entrar no mapa,
+  // senão o getEvents captura o método original. Canvas é rápido → ok por frame.
+  rendererPontos._onZoom = function () { this._reset(); };
   if (!telaCenso._PontoLabel) {
     telaCenso._PontoLabel = L.CircleMarker.extend({
       _updatePath() {
@@ -2030,13 +2036,10 @@ async function telaCenso(estratoId, modo = "censo") {
   }
   // redesenha a régua em qualquer mudança de view (pan/zoom/rotação)
   map.on("move zoom zoomend viewreset rotate rotateend resize", atualizarLeitura);
-  // BUG conhecido do leaflet-rotate: durante o gesto de zoom (pinça) ou giro ele
-  // aplica uma transformação CSS ERRADA no canvas → os pontos "escorregam" pra
-  // longe e só voltam ao soltar o dedo. Solução: reprojetar o canvas a cada frame
-  // de zoom/rotação (_reset redesenha os pontos nas posições corretas, ignorando a
-  // transformação bugada). Canvas é rápido, então redesenhar por frame é tranquilo.
-  const reprojetarPontos = () => { if (rendererPontos && rendererPontos._reset) rendererPontos._reset(); };
-  map.on("zoom rotate", reprojetarPontos);
+  // o zoom já é tratado pelo override de _onZoom (acima). Na ROTAÇÃO, reprojeto também
+  // (a projeção latlng→pixel muda com o bearing) — reset extra é inofensivo e garante
+  // que os pontos não fiquem deslocados ao girar.
+  map.on("rotate", () => { if (rendererPontos && rendererPontos._reset) rendererPontos._reset(); });
 
   // rastro recente (breadcrumb): segmentos amarelos que vão sumindo conforme ando.
   const RASTRO_MAX = 30;
@@ -2442,9 +2445,11 @@ async function telaCenso(estratoId, modo = "censo") {
       let lay;
       const dash = r.estilo ? dashArrayDe(r.estilo) : "6,4"; // tracejado por padrão (referência)
       if (r.tipo === "poligono") {
-        const op = r.opacidade ?? 0;
+        // preenchimento leve por PADRÃO (0.18) p/ o polígono importado ser visível ao
+        // habilitar; só fica transparente se o usuário escolher 0% explicitamente.
+        const op = r.opacidade ?? 0.18;
         // fill:true sempre (mesmo com opacidade 0) pra a área toda pegar o clique
-        lay = L.polygon(r.coords, { color: borda, weight: r.peso || 2, dashArray: dash, fill: true, fillColor: r.cor || "#00BCD4", fillOpacity: op });
+        lay = L.polygon(r.coords, { color: borda, weight: r.peso || 3, dashArray: dash, fill: true, fillColor: r.cor || "#00BCD4", fillOpacity: op });
         if (r.nome) lay.bindTooltip(r.nome);
       } else if (r.tipo === "linha") {
         lay = L.polyline(r.coords, { color: borda, weight: r.peso || 2, dashArray: dash });
