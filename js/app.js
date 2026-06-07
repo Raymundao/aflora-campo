@@ -24,7 +24,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v52"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v53"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -1865,6 +1865,7 @@ async function telaCenso(estratoId, modo = "censo") {
         ${ehFitos ? "" : '<button class="censo-fab" id="censo-lista" title="Lista de pontos">📋</button>'}
         <button class="censo-fab" id="censo-bussola" title="Bússola">🧭</button>
         ${ehFitos ? "" : '<button class="censo-fab" id="censo-trilha" title="Gravar trilha">🛤️</button>'}
+        ${ehFitos ? "" : '<button class="censo-fab ativo" id="censo-labels" title="Mostrar/ocultar nomes (placas)">🏷️</button>'}
         <button class="censo-fab" id="censo-desenho" title="Desenhar fitofisionomia/polígono">✏️</button>
         <button class="censo-fab" id="censo-importar" title="Importar KML (ADA…)">📂</button>
         <button class="censo-fab" id="censo-baixar" title="Baixar área offline">⬇</button>
@@ -1889,6 +1890,7 @@ async function telaCenso(estratoId, modo = "censo") {
         const ctx = this._renderer && this._renderer._ctx;
         const m = this._map;
         if (!ctx || !this._point || !this.options.label) return;
+        if (m && m._mostrarLabels === false) return; // labels desligadas pelo botão 🏷️
         if (m && m.getZoom() < 16) return; // só mostra a placa com zoom razoável (menos poluição/custo)
         const x = this._point.x, y = this._point.y;
         ctx.save();
@@ -1934,7 +1936,8 @@ async function telaCenso(estratoId, modo = "censo") {
   // o leaflet-rotate transforma errado as camadas (linha de medição) durante a animação
   // do zoom → a régua "congelava" no tamanho antigo e ficava longe da mira no zoom-out.
   // Sem animação, a linha é redesenhada na hora, sempre colada na mira (estilo AlpineQuest).
-  const map = L.map("mapa", { zoomControl: false, attributionControl: false, maxZoom: 21, rotate: true, rotateControl: false, touchRotate: false, fadeAnimation: false, zoomAnimation: false }).setView(centro, 17);
+  // touchRotate:true → girar o mapa com dois dedos (gesto de torção), estilo AlpineQuest.
+  const map = L.map("mapa", { zoomControl: false, attributionControl: false, maxZoom: 21, rotate: true, rotateControl: false, touchRotate: true, fadeAnimation: false, zoomAnimation: false }).setView(centro, 17);
   L.control.zoom({ position: "bottomleft" }).addTo(map);
   _mapa = map;
   // camadas de satélite + seletor (igual "Mapas disponíveis" do AlpineQuest).
@@ -1982,7 +1985,7 @@ async function telaCenso(estratoId, modo = "censo") {
   }
   // atualiza a linha/leitura também durante e ao fim do zoom (não só no pan),
   // senão a linha "trava" enquanto dá zoom-out.
-  map.on("move zoom zoomend viewreset", atualizarLeitura);
+  map.on("move zoom zoomend viewreset rotate rotateend", atualizarLeitura);
 
   // rastro recente (breadcrumb): segmentos amarelos que vão sumindo conforme ando.
   const RASTRO_MAX = 30;
@@ -2067,6 +2070,13 @@ async function telaCenso(estratoId, modo = "censo") {
     };
   }
   $("#censo-baixar").onclick = () => baixarAreaCenso();
+  // 🏷️ liga/desliga os nomes (placas) sobre os pontos do censo
+  map._mostrarLabels = true;
+  if ($("#censo-labels")) $("#censo-labels").onclick = () => {
+    map._mostrarLabels = !map._mostrarLabels;
+    $("#censo-labels").classList.toggle("ativo", map._mostrarLabels);
+    renderPontos();
+  };
   // some/mostra os botões de baixo (+Ponto / Desenhar fito) e o 🎯 conforme o painel abre/fecha
   const mostrarAdd = (v) => {
     const b = $("#censo-add") || $("#censo-add-fito"); if (b) b.style.display = v ? "" : "none";

@@ -372,9 +372,14 @@ input:focus, select:focus, textarea:focus { outline: 3px solid var(--verde-claro
 /* bolinha de cor na lista de camadas */
 .cam-cor { display: inline-block; width: 24px; height: 24px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1.5px var(--borda); }
 /* botões compactos de ação dentro dos cards de camada (👁 ✏️ 🗑) */
-.btn-mini { background: var(--card); border: 2px solid var(--borda); color: var(--texto); border-radius: var(--r);
-  min-width: 40px; min-height: 40px; font-size: 18px; cursor: pointer; padding: 0 6px; }
+.btn-mini { background: var(--card); border: 1.5px solid var(--borda); color: var(--texto); border-radius: var(--r);
+  width: 34px; min-width: 34px; height: 34px; font-size: 15px; line-height: 1; cursor: pointer; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center; }
 .btn-mini.perigo { border-color: var(--erro-fg); }
+/* nos cards de camada o nome trunca (não sobrepõe a bolinha de cor / botões) */
+.cam-painel .card { gap: var(--e1); }
+.cam-painel .card-acoes { gap: 4px; }
+.cam-painel .card-nome { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* pasta (subpasta por arquivo) e subitens */
 .cam-grupo { border-left: 4px solid var(--verde-claro); }
 .cam-grupo .card-corpo { cursor: pointer; }
