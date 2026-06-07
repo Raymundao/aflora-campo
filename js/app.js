@@ -24,7 +24,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v55"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v56"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -330,7 +330,7 @@ async function telaInventario(id) {
   app.innerHTML = `${header(inv.nome, telaInventarios)}
     <main>
       <div class="seg-nav">
-        <button class="seg ativo">📋 Parcelas</button>
+        <button class="seg ativo">📋 Amostragem</button>
         <button class="seg" id="ir-especies">🌿 Espécies</button>
         <button class="seg" id="ir-fitos">🗺️ Mapa</button>
       </div>
@@ -1409,7 +1409,7 @@ async function telaEspecies(invId) {
   app.innerHTML = `${header("Espécies", () => telaInventario(invId))}
     <main>
       <div class="seg-nav">
-        <button class="seg" id="ir-parcelas">📋 Parcelas</button>
+        <button class="seg" id="ir-parcelas">📋 Amostragem</button>
         <button class="seg ativo">🌿 Espécies</button>
       </div>
       <button class="btn-grande" id="add-esp">+ Adicionar espécie</button>
@@ -2030,10 +2030,13 @@ async function telaCenso(estratoId, modo = "censo") {
   }
   // redesenha a régua em qualquer mudança de view (pan/zoom/rotação)
   map.on("move zoom zoomend viewreset rotate rotateend resize", atualizarLeitura);
-  // o renderer canvas (pontos) não acompanha a rotação ao vivo no leaflet-rotate:
-  // os pontos “escorregavam” durante o giro e só voltavam ao soltar. Redesenhar o
-  // canvas a cada evento de rotação mantém os pontos colados no lugar.
-  map.on("rotate rotateend", () => { if (rendererPontos && rendererPontos._update) rendererPontos._update(); });
+  // BUG conhecido do leaflet-rotate: durante o gesto de zoom (pinça) ou giro ele
+  // aplica uma transformação CSS ERRADA no canvas → os pontos "escorregam" pra
+  // longe e só voltam ao soltar o dedo. Solução: reprojetar o canvas a cada frame
+  // de zoom/rotação (_reset redesenha os pontos nas posições corretas, ignorando a
+  // transformação bugada). Canvas é rápido, então redesenhar por frame é tranquilo.
+  const reprojetarPontos = () => { if (rendererPontos && rendererPontos._reset) rendererPontos._reset(); };
+  map.on("zoom rotate", reprojetarPontos);
 
   // rastro recente (breadcrumb): segmentos amarelos que vão sumindo conforme ando.
   const RASTRO_MAX = 30;

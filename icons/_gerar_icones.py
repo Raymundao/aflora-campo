@@ -49,25 +49,32 @@ def texto_centrado(d, txt, f, cy, tam, cor):
     return th
 
 
-def gerar(tam: int) -> Image.Image:
+def gerar(tam: int, maskable: bool) -> Image.Image:
+    """maskable=True: tudo dentro da zona segura (círculo central ~80%) pra ícones
+    redondos/curvos não cortarem o texto. maskable=False: usa quase toda a área."""
     img = Image.new("RGBA", (tam, tam), BRANCO)
     d = ImageDraw.Draw(img)
-    ft = fonte(int(tam * 0.165))
+    ft = fonte(int(tam * (0.145 if maskable else 0.165)))
+
+    # margens verticais: apertadas (maskable) ou largas
+    m_top = tam * (0.175 if maskable else 0.07)
+    m_bot = tam * (0.175 if maskable else 0.07)
+    larg_arv = 0.60 if maskable else 0.78
 
     # "Aflora" no topo (oliva)
-    y_top = int(tam * 0.07)
+    y_top = int(m_top)
     h_top = texto_centrado(d, "Aflora", ft, y_top, tam, OLIVA)
     # "Campo" embaixo (verde escuro)
     bb = d.textbbox((0, 0), "Campo", font=ft)
     h_bot = bb[3] - bb[1]
-    y_bot = int(tam * 0.93) - h_bot
+    y_bot = int(tam - m_bot) - h_bot
 
     # árvore no espaço do meio (mantém proporção)
     arv = arvore_recortada()
-    y0 = y_top + h_top + int(tam * 0.04)
+    y0 = y_top + h_top + int(tam * 0.03)
     y1 = y_bot - int(tam * 0.03)
     esp_h = y1 - y0
-    esp_w = int(tam * 0.78)
+    esp_w = int(tam * larg_arv)
     r = min(esp_w / arv.width, esp_h / arv.height)
     nw, nh = int(arv.width * r), int(arv.height * r)
     arv_r = arv.resize((nw, nh), Image.LANCZOS)
@@ -78,9 +85,12 @@ def gerar(tam: int) -> Image.Image:
 
 
 def main():
+    # ícones "normais" (preenchem mais a área) e "maskable" (zona segura p/ redondos)
     for tam in (192, 512):
-        gerar(tam).save(AQUI / f"icon-{tam}.png")
+        gerar(tam, maskable=False).save(AQUI / f"icon-{tam}.png")
         print(f"OK -> icon-{tam}.png")
+    gerar(512, maskable=True).save(AQUI / "icon-512-maskable.png")
+    print("OK -> icon-512-maskable.png")
 
 
 if __name__ == "__main__":
