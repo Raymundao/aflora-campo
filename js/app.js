@@ -24,7 +24,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v51"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v52"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -2039,6 +2039,7 @@ async function telaCenso(estratoId, modo = "censo") {
     if (renderPontos._layer) renderPontos._layer.remove();
     renderPontos._layer = null;
     if (!est) return; // modo fitos não tem pontos
+    if (est.pontosOcultos) return; // camada "Meus pontos" desativada
     const grupo = L.layerGroup();
     const Ponto = telaCenso._PontoLabel;
     est.pontos.forEach((pt, i) => {
@@ -2078,13 +2079,14 @@ async function telaCenso(estratoId, modo = "censo") {
     renderTrilhas._l = null;
     if (!est) return; // modo fitos não tem trilhas
     const g = L.layerGroup();
-    for (const t of est.trilhas) if (t.pontos && t.pontos.length > 1) L.polyline(t.pontos, { color: "#E53935", weight: 3, opacity: 0.7 }).addTo(g);
+    for (const t of est.trilhas) if (!t.oculto && t.pontos && t.pontos.length > 1) L.polyline(t.pontos, { color: "#E53935", weight: 3, opacity: 0.7 }).addTo(g);
     g.addTo(map); renderTrilhas._l = g;
   }
   function renderPoligonos() {
     if (renderPoligonos._l) renderPoligonos._l.remove();
     const g = L.layerGroup();
     for (const p of inv.fitos) {
+      if (p.oculto) continue;
       if (!p.coords || p.coords.length < 3) continue;
       const poly = L.polygon(p.coords, {
         color: p.corBorda || "#2E7D32", weight: p.peso || 2, dashArray: dashArrayDe(p.estilo),
@@ -2374,6 +2376,7 @@ async function telaCenso(estratoId, modo = "censo") {
     const g = L.layerGroup();
     const RefP = telaCenso._RefPonto;
     for (const r of inv.geoRefs) {
+      if (r.oculto) continue;
       const borda = r.corBorda || "#00BCD4";
       let lay;
       const dash = r.estilo ? dashArrayDe(r.estilo) : "6,4"; // tracejado por padrão (referência)
@@ -2507,27 +2510,193 @@ async function telaCenso(estratoId, modo = "censo") {
     $("#trk-ok").onclick = async () => { await salvarJa(); fechar(); };
     $("#trk-del").onclick = async () => { if (!confirm(`Excluir a trilha "${t.nome || ""}"?`)) return; est.trilhas = est.trilhas.filter((x) => x !== t); await salvarJa(); fechar(); renderTrilhas(); };
   }
+  // estado do painel de camadas (preservado entre re-render): seleção e pastas abertas
+  const camEstado = { modoSel: false, sel: new Set(), abertas: new Set() };
+  function redesenharTudo() { renderPontos(); renderTrilhas(); renderPoligonos(); renderReferencias(); }
+  function gruposImportados() {
+    // agrupa as referências importadas por arquivo de origem (fonte) → "subpasta"
+    const m = new Map();
+    inv.geoRefs.forEach((r, i) => {
+      const f = r.fonte || "KML";
+      if (!m.has(f)) m.set(f, []);
+      m.get(f).push({ r, i });
+    });
+    return [...m.entries()].map(([fonte, itens]) => ({ fonte, itens }));
+  }
   function abrirCamadas() {
     const painel = $("#censo-painel"); mostrarAdd(false);
+    const { modoSel, sel, abertas } = camEstado;
     const swatch = (cor) => `<span class="cam-cor" style="background:${esc(cor)}"></span>`;
+    const olho = (vis) => vis ? "👁" : "🙈";
+    const grupos = gruposImportados();
+    const resumo = (itens) => {
+      const c = { ponto: 0, linha: 0, poligono: 0 };
+      itens.forEach((x) => { c[x.r.tipo] = (c[x.r.tipo] || 0) + 1; });
+      const p = [];
+      if (c.ponto) p.push(`${c.ponto} ponto${c.ponto > 1 ? "s" : ""}`);
+      if (c.linha) p.push(`${c.linha} linha${c.linha > 1 ? "s" : ""}`);
+      if (c.poligono) p.push(`${c.poligono} polígono${c.poligono > 1 ? "s" : ""}`);
+      return p.join(" · ");
+    };
+    const chk = (key) => modoSel ? `<input type="checkbox" class="cam-chk" data-key="${esc(key)}" ${sel.has(key) ? "checked" : ""}>` : "";
+
+    // ----- seção: meus pontos (censo) -----
+    const pontosHtml = est ? `<div class="card" data-cam-pontos>
+      <div class="card-corpo"><div class="card-nome">📍 Meus pontos (${est.pontos.length})</div>
+        <div class="card-sub">${est.pontosOcultos ? "camada oculta" : "toque pra listar / ordenar / editar"}</div></div>
+      <div class="card-acoes"><button class="btn-mini" data-pontos-eye title="Exibir/ocultar">${olho(!est.pontosOcultos)}</button></div></div>` : "";
+
+    // ----- seção: fitofisionomias -----
+    const fitosHtml = inv.fitos.map((p) => `<div class="card">
+      ${modoSel ? `<div class="card-acoes">${chk("pol:" + p.id)}</div>` : ""}
+      <div class="card-corpo" data-pol="${p.id}"><div class="card-nome">▱ ${esc(p.fito || p.nome || "fitofisionomia")}</div>
+        <div class="card-sub">${fmtNum(p.areaM2 / 10000, 4)} ha${p.fito && p.nome ? " · " + esc(p.nome) : ""}${p.oculto ? " · oculta" : ""}</div></div>
+      <div class="card-acoes">${swatch(p.cor || "#43A047")}
+        ${modoSel ? "" : `<button class="btn-mini" data-pol-eye="${p.id}">${olho(!p.oculto)}</button><button class="btn-mini perigo" data-pol-del="${p.id}">🗑</button>`}</div></div>`).join("");
+
+    // ----- seção: trilhas -----
+    const trksHtml = (est?.trilhas || []).map((t, i) => `<div class="card">
+      ${modoSel ? `<div class="card-acoes">${chk("trk:" + i)}</div>` : ""}
+      <div class="card-corpo" data-trk="${i}"><div class="card-nome">〰 ${esc(t.nome || "trilha")}</div>
+        <div class="card-sub">${t.pontos.length} pts${t.oculto ? " · oculta" : ""}</div></div>
+      <div class="card-acoes">${modoSel ? "" : `<button class="btn-mini" data-trk-eye="${i}">${olho(!t.oculto)}</button><button class="btn-mini perigo" data-trk-del="${i}">🗑</button>`}</div></div>`).join("");
+
+    // ----- seção: importados, agrupados por arquivo (subpastas) -----
+    const gruposHtml = grupos.map((g, gi) => {
+      const algumVis = g.itens.some((x) => !x.r.oculto);
+      const cor = g.itens[0].r.corBorda || g.itens[0].r.cor || "#00BCD4";
+      const aberta = abertas.has(g.fonte);
+      let sub = "";
+      if (aberta && !modoSel) {
+        const LIM = 60;
+        sub = `<div class="cam-sub-lista">` + g.itens.slice(0, LIM).map(({ r, i }) => `<div class="card cam-sub">
+          <div class="card-corpo" data-ref="${i}"><div class="card-nome">${r.tipo === "poligono" ? "▱" : r.tipo === "linha" ? "〰" : "•"} ${esc(r.nome || r.tipo)}</div>${r.oculto ? '<div class="card-sub">oculto</div>' : ""}</div>
+          <div class="card-acoes"><button class="btn-mini" data-ref-eye="${i}">${olho(!r.oculto)}</button><button class="btn-mini perigo" data-ref-del="${i}">🗑</button></div></div>`).join("")
+          + (g.itens.length > LIM ? `<p class="vazio-min">+${g.itens.length - LIM} item(ns) — use ✏️ pra editar todos de uma vez, ou toque no mapa.</p>` : "")
+          + `</div>`;
+      }
+      return `<div class="card cam-grupo">
+        ${modoSel ? `<div class="card-acoes">${chk("grp:" + gi)}</div>` : ""}
+        <div class="card-corpo" data-grupo-exp="${esc(g.fonte)}"><div class="card-nome">📁 ${esc(g.fonte)} ${modoSel ? "" : (aberta ? "▾" : "▸")}</div>
+          <div class="card-sub">${resumo(g.itens)}</div></div>
+        <div class="card-acoes">${swatch(cor)}
+          ${modoSel ? "" : `<button class="btn-mini" data-grupo-eye="${gi}">${olho(algumVis)}</button><button class="btn-mini" data-grupo-edit="${gi}" title="Editar todos">✏️</button><button class="btn-mini perigo" data-grupo-del="${gi}">🗑</button>`}</div>
+      </div>${sub}`;
+    }).join("");
+
     const secao = (titulo, html) => html ? `<h3>${titulo}</h3><div class="cards">${html}</div>` : "";
-    const pols = inv.fitos.map((p) => `<div class="card" data-cam-pol="${p.id}"><div class="card-corpo"><div class="card-nome">▱ ${esc(p.fito || p.nome || "fitofisionomia")}</div><div class="card-sub">${fmtNum(p.areaM2 / 10000, 4)} ha${p.fito && p.nome ? " · " + esc(p.nome) : ""}</div></div><div class="card-acoes">${swatch(p.cor || "#43A047")}</div></div>`).join("");
-    const trks = (est?.trilhas || []).map((t, i) => `<div class="card" data-cam-trk="${i}"><div class="card-corpo"><div class="card-nome">〰 ${esc(t.nome || "trilha")}</div><div class="card-sub">${t.pontos.length} pts · gravada</div></div></div>`).join("");
-    const refs = inv.geoRefs.map((r, i) => `<div class="card" data-cam-ref="${i}"><div class="card-corpo"><div class="card-nome">${r.tipo === "poligono" ? "▱" : r.tipo === "linha" ? "〰" : "•"} ${esc(r.nome || r.tipo)}</div><div class="card-sub">importado · ${esc(r.fonte || "KML")}</div></div><div class="card-acoes">${swatch(r.corBorda || "#00BCD4")}</div></div>`).join("");
     const vazio = !inv.fitos.length && !(est?.trilhas?.length) && !inv.geoRefs.length;
-    painel.innerHTML = `<div class="censo-form">
-      <div class="censo-form-top"><b>Camadas</b><span style="flex:1"></span><button class="btn-foto" id="cam-fechar">✕</button></div>
-      ${est ? `<div class="cards"><div class="card" id="cam-pontos"><div class="card-corpo"><div class="card-nome">📍 Meus pontos (${est.pontos.length})</div><div class="card-sub">toque pra listar / ordenar / editar</div></div></div></div>` : ""}
-      ${secao("Fitofisionomias / polígonos", pols)}
-      ${secao("Trilhas gravadas", trks)}
-      ${secao("Referências importadas (KML)", refs)}
+    painel.innerHTML = `<div class="censo-form cam-painel">
+      <div class="censo-form-top"><b>Camadas</b><span style="flex:1"></span>
+        ${inv.geoRefs.length || inv.fitos.length || est?.trilhas?.length ? `<button class="btn-foto" id="cam-sel">${modoSel ? "✓ Pronto" : "☑ Selecionar"}</button>` : ""}
+        <button class="btn-foto" id="cam-fechar">✕</button></div>
+      ${pontosHtml ? `<div class="cards">${pontosHtml}</div>` : ""}
+      ${secao("Fitofisionomias / polígonos", fitosHtml)}
+      ${secao("Trilhas gravadas", trksHtml)}
+      ${secao("Importados (KML/KMZ)", gruposHtml)}
       ${vazio ? `<p class="vazio">${ehFitos ? "Nenhuma fitofisionomia ainda. Desenhe (✏️) ou importe um KML (📂)." : "Sem camadas extras ainda."}</p>` : ""}
+      ${modoSel ? `<div class="cam-sel-barra">
+        <button class="btn-sec" id="cam-exibir">👁 Exibir</button>
+        <button class="btn-sec" id="cam-ocultar">🙈 Ocultar</button>
+        <button class="btn-sec perigo" id="cam-excluir">🗑 Excluir</button></div>` : ""}
     </div>`;
+
     $("#cam-fechar").onclick = () => { painel.innerHTML = ""; mostrarAdd(true); };
-    if ($("#cam-pontos")) $("#cam-pontos").onclick = abrirLista;
-    painel.querySelectorAll("[data-cam-pol]").forEach((el) => { el.onclick = () => { const p = inv.fitos.find((x) => x.id === el.dataset.camPol); if (p) abrirFormPoligono(p); }; });
-    painel.querySelectorAll("[data-cam-trk]").forEach((el) => { el.onclick = () => { const t = est.trilhas[+el.dataset.camTrk]; if (t) abrirFormTrilha(t); }; });
-    painel.querySelectorAll("[data-cam-ref]").forEach((el) => { el.onclick = () => { const r = inv.geoRefs[+el.dataset.camRef]; if (r) abrirFormReferencia(r); }; });
+    if ($("#cam-sel")) $("#cam-sel").onclick = () => { camEstado.modoSel = !camEstado.modoSel; camEstado.sel.clear(); abrirCamadas(); };
+    painel.querySelectorAll(".cam-chk").forEach((el) => { el.onchange = () => { el.checked ? sel.add(el.dataset.key) : sel.delete(el.dataset.key); }; });
+
+    // ações da seção meus pontos
+    if (est) {
+      painel.querySelector("[data-cam-pontos] .card-corpo").onclick = abrirLista;
+      const pe = painel.querySelector("[data-pontos-eye]");
+      if (pe) pe.onclick = async (e) => { e.stopPropagation(); est.pontosOcultos = !est.pontosOcultos; await salvarJa(); renderPontos(); abrirCamadas(); };
+    }
+    // fitos
+    painel.querySelectorAll("[data-pol]").forEach((el) => { el.onclick = () => { const p = inv.fitos.find((x) => x.id === el.dataset.pol); if (p) abrirFormPoligono(p); }; });
+    painel.querySelectorAll("[data-pol-eye]").forEach((el) => { el.onclick = async () => { const p = inv.fitos.find((x) => x.id === el.dataset.polEye); if (!p) return; p.oculto = !p.oculto; await salvarJa(); renderPoligonos(); abrirCamadas(); }; });
+    painel.querySelectorAll("[data-pol-del]").forEach((el) => { el.onclick = async () => { const p = inv.fitos.find((x) => x.id === el.dataset.polDel); if (!p || !confirm(`Excluir "${p.fito || p.nome || "fitofisionomia"}"?`)) return; inv.fitos = inv.fitos.filter((x) => x !== p); await salvarJa(); renderPoligonos(); abrirCamadas(); }; });
+    // trilhas
+    painel.querySelectorAll("[data-trk]").forEach((el) => { el.onclick = () => { const t = est.trilhas[+el.dataset.trk]; if (t) abrirFormTrilha(t); }; });
+    painel.querySelectorAll("[data-trk-eye]").forEach((el) => { el.onclick = async () => { const t = est.trilhas[+el.dataset.trkEye]; if (!t) return; t.oculto = !t.oculto; await salvarJa(); renderTrilhas(); abrirCamadas(); }; });
+    painel.querySelectorAll("[data-trk-del]").forEach((el) => { el.onclick = async () => { const t = est.trilhas[+el.dataset.trkDel]; if (!t || !confirm(`Excluir a trilha "${t.nome || ""}"?`)) return; est.trilhas = est.trilhas.filter((x) => x !== t); await salvarJa(); renderTrilhas(); abrirCamadas(); }; });
+    // grupos importados
+    painel.querySelectorAll("[data-grupo-exp]").forEach((el) => { el.onclick = () => { const f = el.dataset.grupoExp; abertas.has(f) ? abertas.delete(f) : abertas.add(f); abrirCamadas(); }; });
+    painel.querySelectorAll("[data-grupo-eye]").forEach((el) => { el.onclick = async () => { const g = grupos[+el.dataset.grupoEye]; if (!g) return; const algumVis = g.itens.some((x) => !x.r.oculto); g.itens.forEach((x) => { x.r.oculto = algumVis; }); await salvarJa(); renderReferencias(); abrirCamadas(); }; });
+    painel.querySelectorAll("[data-grupo-edit]").forEach((el) => { el.onclick = () => { const g = grupos[+el.dataset.grupoEdit]; if (g) abrirFormGrupo(g); }; });
+    painel.querySelectorAll("[data-grupo-del]").forEach((el) => { el.onclick = async () => { const g = grupos[+el.dataset.grupoDel]; if (!g || !confirm(`Excluir o arquivo "${g.fonte}" e suas ${g.itens.length} feição(ões)?`)) return; inv.geoRefs = inv.geoRefs.filter((r) => (r.fonte || "KML") !== g.fonte); abertas.delete(g.fonte); await salvarJa(); renderReferencias(); abrirCamadas(); }; });
+    // subitens de um grupo
+    painel.querySelectorAll("[data-ref]").forEach((el) => { el.onclick = () => { const r = inv.geoRefs[+el.dataset.ref]; if (r) abrirFormReferencia(r); }; });
+    painel.querySelectorAll("[data-ref-eye]").forEach((el) => { el.onclick = async () => { const r = inv.geoRefs[+el.dataset.refEye]; if (!r) return; r.oculto = !r.oculto; await salvarJa(); renderReferencias(); abrirCamadas(); }; });
+    painel.querySelectorAll("[data-ref-del]").forEach((el) => { el.onclick = async () => { const r = inv.geoRefs[+el.dataset.refDel]; if (!r || !confirm(`Excluir "${r.nome || r.tipo}"?`)) return; inv.geoRefs = inv.geoRefs.filter((x) => x !== r); await salvarJa(); renderReferencias(); abrirCamadas(); }; });
+
+    // barra de seleção: aplica exibir/ocultar/excluir nos itens marcados
+    const aplicarSel = async (acao) => {
+      if (!sel.size) { alert("Marque ao menos um item."); return; }
+      if (acao === "excluir" && !confirm(`Excluir os ${sel.size} item(ns) selecionado(s)?`)) return;
+      for (const key of sel) {
+        const [tipo, ref] = key.split(/:(.+)/);
+        if (tipo === "pol") {
+          const p = inv.fitos.find((x) => x.id === ref);
+          if (!p) continue;
+          if (acao === "excluir") inv.fitos = inv.fitos.filter((x) => x !== p);
+          else p.oculto = acao === "ocultar";
+        } else if (tipo === "trk") {
+          const t = est?.trilhas[+ref];
+          if (!t) continue;
+          if (acao === "excluir") est.trilhas = est.trilhas.filter((x) => x !== t);
+          else t.oculto = acao === "ocultar";
+        } else if (tipo === "grp") {
+          const g = grupos[+ref];
+          if (!g) continue;
+          if (acao === "excluir") { inv.geoRefs = inv.geoRefs.filter((r) => (r.fonte || "KML") !== g.fonte); abertas.delete(g.fonte); }
+          else g.itens.forEach((x) => { x.r.oculto = acao === "ocultar"; });
+        }
+      }
+      sel.clear();
+      await salvarJa(); redesenharTudo(); abrirCamadas();
+    };
+    if ($("#cam-exibir")) $("#cam-exibir").onclick = () => aplicarSel("exibir");
+    if ($("#cam-ocultar")) $("#cam-ocultar").onclick = () => aplicarSel("ocultar");
+    if ($("#cam-excluir")) $("#cam-excluir").onclick = () => aplicarSel("excluir");
+  }
+  // editar TODAS as feições importadas de um arquivo de uma vez (cor/forma/tamanho ou estilo/largura)
+  function abrirFormGrupo(g) {
+    const painel = $("#censo-painel"); mostrarAdd(false);
+    const temPonto = g.itens.some((x) => x.r.tipo === "ponto");
+    const temLinhaPol = g.itens.some((x) => x.r.tipo !== "ponto");
+    const cor0 = g.itens[0].r.corBorda || g.itens[0].r.cor || "#00BCD4";
+    painel.innerHTML = `<div class="censo-form">
+      <div class="censo-form-top"><b>Editar tudo — ${esc(g.fonte)}</b>
+        <span class="censo-form-coord">${g.itens.length} feição(ões)</span>
+        <button class="btn-foto" id="gr-fechar">✕</button></div>
+      <label class="campo">Cor (aplica a todos)<input id="gr-cor" type="color" value="${cor0}"></label>
+      ${temPonto ? `<div class="linha2">
+        <label>Forma dos pontos<select id="gr-forma"><option value="">— manter —</option>${FORMAS_PONTO.map((f) => `<option value="${f}">${f}</option>`).join("")}</select></label>
+        <label>Tamanho: <b id="gr-tam-val">12</b><input id="gr-tam" type="range" min="8" max="30" value="12"></label>
+      </div>` : ""}
+      ${temLinhaPol ? `<div class="linha2">
+        <label>Estilo da linha<select id="gr-estilo"><option value="">— manter —</option>${["solida", "tracejada", "pontilhada", "traço-ponto"].map((s) => `<option value="${s}">${s}</option>`).join("")}</select></label>
+        <label>Largura: <b id="gr-peso-val">2</b><input id="gr-peso" type="range" min="1" max="8" value="2"></label>
+      </div>` : ""}
+      <p class="vazio-min">Cor é aplicada a todos. Forma/tamanho só nos pontos; estilo/largura só nas linhas/polígonos. "— manter —" não mexe naquele campo.</p>
+      <div class="acoes-linha"><button class="btn-grande destaque" id="gr-ok">✓ Aplicar a todos</button></div></div>`;
+    const fechar = () => abrirCamadas();
+    $("#gr-fechar").onclick = fechar;
+    if (temPonto) $("#gr-tam").oninput = (e) => { $("#gr-tam-val").textContent = e.target.value; };
+    if (temLinhaPol) $("#gr-peso").oninput = (e) => { $("#gr-peso-val").textContent = e.target.value; };
+    $("#gr-ok").onclick = async () => {
+      const cor = $("#gr-cor").value;
+      const forma = temPonto ? $("#gr-forma").value : "";
+      const tam = temPonto && $("#gr-tam") ? +$("#gr-tam").value : null;
+      const estilo = temLinhaPol ? $("#gr-estilo").value : "";
+      const peso = temLinhaPol && $("#gr-peso") ? +$("#gr-peso").value : null;
+      g.itens.forEach(({ r }) => {
+        r.cor = cor; r.corBorda = cor;
+        if (r.tipo === "ponto") { if (forma) r.forma = forma; if (tam != null) r.tamanho = tam; }
+        else { if (estilo) r.estilo = estilo; if (peso != null) r.peso = peso; }
+      });
+      await salvarJa(); renderReferencias(); abrirCamadas();
+    };
   }
   $("#censo-camadas").onclick = abrirCamadas;
 
