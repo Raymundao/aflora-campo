@@ -195,7 +195,11 @@ const MIME = {
 };
 
 export function baixar(nomeArquivo, conteudo, tipo = "text/plain") {
-  const blob = conteudo instanceof Blob ? conteudo : new Blob([conteudo], { type: `${tipo};charset=utf-8` });
+  // Reembrulha SEMPRE com o tipo certo. XLSX/KMZ são zip por dentro, então o blob
+  // vem como "application/zip"; se baixarmos assim, o Android gruda ".zip" no nome
+  // (vira "arquivo.xlsx.zip") e o celular não abre como planilha. Forçar o MIME
+  // correto (xlsx/kmz/json) faz o nome e a abertura ficarem certos.
+  const blob = conteudo instanceof Blob ? new Blob([conteudo], { type: tipo }) : new Blob([conteudo], { type: `${tipo};charset=utf-8` });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
