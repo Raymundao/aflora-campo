@@ -24,7 +24,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v60"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v61"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -1985,7 +1985,10 @@ async function telaCenso(estratoId, modo = "censo") {
         ctx.beginPath(); ctx.arc(p.x, p.y, 9, 0, 2 * Math.PI); ctx.fill(); ctx.stroke();
         if (labels) labels.push(p.x, p.y, String(pt.placa || (i + 1)));
       }
-      if (labels && labels.length) {
+      // placas: só desenha o TEXTO quando há poucos pontos na tela. Com muitos, o texto
+      // (a) custava caro e dava "pau" ao terminar o zoom e (b) virava um borrão ilegível.
+      // Aproxime o zoom que, com poucos pontos à vista, as placas aparecem.
+      if (labels && labels.length && labels.length / 3 <= 140) {
         ctx.font = "bold 11px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.lineWidth = 3;
         for (let j = 0; j < labels.length; j += 3) {
           ctx.strokeStyle = "rgba(0,0,0,.75)"; ctx.strokeText(labels[j + 2], labels[j], labels[j + 1]);
