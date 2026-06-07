@@ -24,7 +24,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v58"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v59"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -1918,52 +1918,6 @@ async function telaCenso(estratoId, modo = "censo") {
     </div>`;
 
   const L = window.L;
-  // pontos do censo em CANVAS (não DOM) — aguenta milhares sem travar, igual AlpineQuest.
-  // 1 renderer canvas pra todos; classe que desenha o círculo + a placa no próprio canvas.
-  const rendererPontos = L.canvas({ padding: 0.5 });
-  // CORREÇÃO do bug de "pontos escorregando" no zoom/pinça: o leaflet-rotate aplica
-  // uma transformação CSS errada no canvas durante o gesto (_onZoom → _updateTransform).
-  // Sobrescrevo _onZoom pra REPROJETAR de verdade (_reset redesenha os pontos nas
-  // posições corretas a cada frame). Tem que ser ANTES do renderer entrar no mapa,
-  // senão o getEvents captura o método original. Canvas é rápido → ok por frame.
-  rendererPontos._onZoom = function () { this._reset(); };
-  if (!telaCenso._PontoLabel) {
-    telaCenso._PontoLabel = L.CircleMarker.extend({
-      _updatePath() {
-        L.CircleMarker.prototype._updatePath.call(this); // desenha o círculo
-        const ctx = this._renderer && this._renderer._ctx;
-        const m = this._map;
-        if (!ctx || !this._point || !this.options.label) return;
-        if (m && m._mostrarLabels === false) return; // labels desligadas pelo botão 🏷️
-        if (m && m.getZoom() < 16) return; // só mostra a placa com zoom razoável (menos poluição/custo)
-        const x = this._point.x, y = this._point.y;
-        ctx.save();
-        ctx.font = "bold 11px system-ui, sans-serif";
-        ctx.textAlign = "center"; ctx.textBaseline = "middle";
-        ctx.lineWidth = 3; ctx.strokeStyle = "rgba(0,0,0,.75)";
-        ctx.strokeText(this.options.label, x, y);
-        ctx.fillStyle = "#fff"; ctx.fillText(this.options.label, x, y);
-        ctx.restore();
-      },
-    });
-  }
-  // pontos de REFERÊNCIA (KML/KMZ importado) também em CANVAS — desenha a forma
-  // (círculo/quadrado/losango/triângulo) no canvas; aguenta milhares importados.
-  if (!telaCenso._RefPonto) {
-    telaCenso._RefPonto = L.CircleMarker.extend({
-      _updatePath() {
-        const ctx = this._renderer && this._renderer._ctx;
-        if (!ctx || !this._point) return;
-        const x = this._point.x, y = this._point.y;
-        const s = this.options.tam || 12, forma = this.options.forma, cor = this.options.color;
-        ctx.save();
-        ctx.fillStyle = cor; ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
-        desenharFormaPonto(ctx, x, y, s, forma);
-        ctx.fill(); ctx.stroke();
-        ctx.restore();
-      },
-    });
-  }
   let centro = [-19.65, -43.9];
   // centro inicial: último ponto do censo, ou 1º vértice de uma fito/referência
   const comCoord = (est?.pontos || []).filter((p) => p.lat != null);
@@ -1982,6 +1936,88 @@ async function telaCenso(estratoId, modo = "censo") {
   // escala adaptativa (só métrica, discreta) — vira referência visual da distância
   L.control.scale({ position: "bottomleft", metric: true, imperial: false, maxWidth: 110 }).addTo(map);
   _mapa = map;
+
+  // ---- PONTOS numa CAMADA DE CANVAS PRÓPRIA (overlay de tela) ----
+  // Em vez de usar o renderer canvas do Leaflet (que o leaflet-rotate transforma
+  // ERRADO durante o gesto → pontos "escorregavam" e voltavam ao soltar), desenho
+  // os pontos num canvas que cobre a tela inteira e REDESENHO a cada evento de mapa
+  // nas COORDENADAS DE TELA reais (latLngToContainerPoint, que já inclui zoom+rotação).
+  // Como sempre desenho na posição real, não existe transformação intermediária pra
+  // dar errado: os pontos ficam SEMPRE colados no lugar, mesmo no meio da pinça/giro.
+  const pontosCv = document.createElement("canvas");
+  pontosCv.className = "censo-pontos-cv";
+  map.getContainer().appendChild(pontosCv);
+  const pontosCtx = pontosCv.getContext("2d");
+  function ajustarPontosCv() {
+    const sz = map.getSize(), dpr = window.devicePixelRatio || 1;
+    pontosCv.width = Math.round(sz.x * dpr); pontosCv.height = Math.round(sz.y * dpr);
+    pontosCv.style.width = sz.x + "px"; pontosCv.style.height = sz.y + "px";
+  }
+  ajustarPontosCv();
+  function desenharPontos() {
+    const sz = map.getSize(), dpr = window.devicePixelRatio || 1;
+    if (pontosCv.width !== Math.round(sz.x * dpr)) ajustarPontosCv();
+    const ctx = pontosCtx, mx = sz.x + 40, my = sz.y + 40;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, sz.x, sz.y);
+    // pontos importados (referência) — atrás
+    for (const r of inv.geoRefs) {
+      if (r.oculto || r.tipo !== "ponto") continue;
+      const p = map.latLngToContainerPoint(r.coords[0]);
+      if (p.x < -40 || p.y < -40 || p.x > mx || p.y > my) continue;
+      ctx.fillStyle = r.cor || r.corBorda || "#00BCD4"; ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
+      desenharFormaPonto(ctx, p.x, p.y, r.tamanho || 12, r.forma);
+      ctx.fill(); ctx.stroke();
+    }
+    // pontos do censo — na frente
+    if (est && !est.pontosOcultos) {
+      const zoom = map.getZoom();
+      ctx.lineWidth = 2; ctx.strokeStyle = "#fff";
+      est.pontos.forEach((pt) => {
+        if (pt.lat == null) return;
+        const p = map.latLngToContainerPoint([pt.lat, pt.lon]);
+        if (p.x < -40 || p.y < -40 || p.x > mx || p.y > my) return;
+        ctx.fillStyle = "#1B5E20";
+        ctx.beginPath(); ctx.arc(p.x, p.y, 9, 0, 2 * Math.PI); ctx.fill(); ctx.stroke();
+      });
+      if (map._mostrarLabels !== false && zoom >= 16) {
+        ctx.font = "bold 11px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        est.pontos.forEach((pt, i) => {
+          if (pt.lat == null) return;
+          const p = map.latLngToContainerPoint([pt.lat, pt.lon]);
+          if (p.x < -40 || p.y < -40 || p.x > mx || p.y > my) return;
+          const txt = String(pt.placa || (i + 1));
+          ctx.lineWidth = 3; ctx.strokeStyle = "rgba(0,0,0,.75)"; ctx.strokeText(txt, p.x, p.y);
+          ctx.fillStyle = "#fff"; ctx.fillText(txt, p.x, p.y);
+        });
+      }
+    }
+  }
+  // redesenha os pontos em QUALQUER mudança de view (inclui frames do gesto)
+  map.on("move zoom rotate zoomend moveend rotateend viewreset resize zoomanim", desenharPontos);
+  // tocar num ponto abre o formulário (hit-test por proximidade na tela); ignora em modo desenho
+  map.on("click", (e) => {
+    if (desenho) return;
+    const cp = e.containerPoint;
+    if (est && !est.pontosOcultos) {
+      let achou = null, melhor = 18;
+      for (const pt of est.pontos) {
+        if (pt.lat == null) continue;
+        const p = map.latLngToContainerPoint([pt.lat, pt.lon]);
+        const d = Math.hypot(p.x - cp.x, p.y - cp.y);
+        if (d < melhor) { melhor = d; achou = pt; }
+      }
+      if (achou) { abrirFormPonto(achou, false); return; }
+    }
+    let achouR = null, melhorR = 18;
+    for (const r of inv.geoRefs) {
+      if (r.oculto || r.tipo !== "ponto") continue;
+      const p = map.latLngToContainerPoint(r.coords[0]);
+      const d = Math.hypot(p.x - cp.x, p.y - cp.y);
+      if (d < melhorR) { melhorR = d; achouR = r; }
+    }
+    if (achouR) abrirFormReferencia(achouR);
+  });
   // camadas de satélite + seletor (igual "Mapas disponíveis" do AlpineQuest).
   // tileTemplate guarda a URL da camada ativa pro pré-download de área.
   let tileTemplate = CAMADAS_SAT[0].url;
@@ -2037,10 +2073,6 @@ async function telaCenso(estratoId, modo = "censo") {
   }
   // redesenha a régua em qualquer mudança de view (pan/zoom/rotação)
   map.on("move zoom zoomend viewreset rotate rotateend resize", atualizarLeitura);
-  // o zoom já é tratado pelo override de _onZoom (acima). Na ROTAÇÃO, reprojeto também
-  // (a projeção latlng→pixel muda com o bearing) — reset extra é inofensivo e garante
-  // que os pontos não fiquem deslocados ao girar.
-  map.on("rotate", () => { if (rendererPontos && rendererPontos._reset) rendererPontos._reset(); });
 
   // rastro recente (breadcrumb): segmentos amarelos que vão sumindo conforme ando.
   const RASTRO_MAX = 30;
@@ -2093,26 +2125,8 @@ async function telaCenso(estratoId, modo = "censo") {
     }, () => {}, { enableHighAccuracy: true, maximumAge: 2000, timeout: 15000 });
   }
 
-  function renderPontos() {
-    if (renderPontos._layer) renderPontos._layer.remove();
-    renderPontos._layer = null;
-    if (!est) return; // modo fitos não tem pontos
-    if (est.pontosOcultos) return; // camada "Meus pontos" desativada
-    const grupo = L.layerGroup();
-    const Ponto = telaCenso._PontoLabel;
-    est.pontos.forEach((pt, i) => {
-      if (pt.lat == null) return;
-      const m = new Ponto([pt.lat, pt.lon], {
-        renderer: rendererPontos, radius: 9,
-        color: "#fff", weight: 2, fillColor: "#1B5E20", fillOpacity: 1,
-        label: String(pt.placa || (i + 1)),
-      });
-      m.on("click", () => abrirFormPonto(pt, false));
-      grupo.addLayer(m);
-    });
-    grupo.addTo(map);
-    renderPontos._layer = grupo;
-  }
+  // pontos do censo são desenhados na camada de canvas própria (desenharPontos)
+  function renderPontos() { desenharPontos(); }
   renderPontos();
   atualizarLeitura();
 
@@ -2439,9 +2453,10 @@ async function telaCenso(estratoId, modo = "censo") {
   function renderReferencias() {
     if (renderReferencias._l) renderReferencias._l.remove();
     const g = L.layerGroup();
-    const RefP = telaCenso._RefPonto;
+    // polígonos e linhas ficam como camadas Leaflet (SVG). Os PONTOS importados são
+    // desenhados na camada de canvas própria (desenharPontos) p/ não escorregar no gesto.
     for (const r of inv.geoRefs) {
-      if (r.oculto) continue;
+      if (r.oculto || r.tipo === "ponto") continue;
       const borda = r.corBorda || "#00BCD4";
       let lay;
       const dash = r.estilo ? dashArrayDe(r.estilo) : "6,4"; // tracejado por padrão (referência)
@@ -2451,19 +2466,15 @@ async function telaCenso(estratoId, modo = "censo") {
         const op = r.opacidade ?? 0.18;
         // fill:true sempre (mesmo com opacidade 0) pra a área toda pegar o clique
         lay = L.polygon(r.coords, { color: borda, weight: r.peso || 3, dashArray: dash, fill: true, fillColor: r.cor || "#00BCD4", fillOpacity: op });
-        if (r.nome) lay.bindTooltip(r.nome);
-      } else if (r.tipo === "linha") {
-        lay = L.polyline(r.coords, { color: borda, weight: r.peso || 2, dashArray: dash });
-        if (r.nome) lay.bindTooltip(r.nome);
       } else {
-        // ponto importado → CANVAS (sem DOM por ponto; aguenta milhares importados)
-        const tam = r.tamanho || 12;
-        lay = new RefP(r.coords[0], { renderer: rendererPontos, radius: tam / 2, color: borda, weight: 0, fillOpacity: 1, tam, forma: r.forma });
+        lay = L.polyline(r.coords, { color: borda, weight: r.peso || 2, dashArray: dash });
       }
+      if (r.nome) lay.bindTooltip(r.nome);
       lay.on("click", () => abrirFormReferencia(r));
       lay.addTo(g);
     }
     g.addTo(map); renderReferencias._l = g;
+    desenharPontos(); // pontos importados (e do censo) na camada própria
   }
   // tela de edição da referência KML (nome, cor, e — se polígono — preenchimento/transparência)
   function abrirFormReferencia(r) {

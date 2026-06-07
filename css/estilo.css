@@ -302,6 +302,8 @@ input:focus, select:focus, textarea:focus { outline: 3px solid var(--verde-claro
 .leaflet-control-scale { margin-bottom: 6px !important; margin-left: 8px !important; }
 .leaflet-control-scale-line { background: rgba(0,0,0,.5); color: #fff; border-color: #fff !important;
   border-top: none !important; font-size: 11px; font-weight: 700; padding: 1px 6px; text-shadow: 0 1px 2px rgba(0,0,0,.9); }
+/* camada de canvas dos pontos do censo (overlay próprio, imune ao bug do rotate) */
+.censo-pontos-cv { position: absolute; inset: 0; z-index: 450; pointer-events: none; }
 /* selo de versão no mapa (ajuda a confirmar qual versão está rodando no campo) */
 .censo-ver { position: absolute; top: max(14px, env(safe-area-inset-top)); left: 64px; z-index: 760;
   background: rgba(0,0,0,.55); color: #fff; font-size: 11px; font-weight: 700; padding: 3px 8px;
