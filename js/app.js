@@ -24,7 +24,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v57"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v58"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -1895,6 +1895,7 @@ async function telaCenso(estratoId, modo = "censo") {
       <div class="censo-dot" id="censo-dot"></div>
       <div class="censo-label" id="censo-label" hidden></div>
       <button class="censo-fab censo-voltar" id="censo-voltar" aria-label="Voltar">‹</button>
+      <div class="censo-ver" id="censo-ver">${APP_VERSION}</div>
       <div class="bussola" id="bussola" hidden><div class="bussola-rosa" id="bussola-rosa"><span class="bussola-n">N</span></div><span class="bussola-deg" id="bussola-deg">—</span></div>
       <div class="trk-banner" id="trk-banner" hidden></div>
       <div class="censo-fabs">
