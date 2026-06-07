@@ -24,7 +24,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v62"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v63"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -2053,6 +2053,10 @@ async function telaCenso(estratoId, modo = "censo") {
   setTimeout(() => map.invalidateSize(), 120); // o container acabou de entrar no DOM
 
   let userLatLng = null, userAlt = null, userAcc = null, userMarker = null;
+  let seguindo = true; // mapa acompanha a minha posição; desliga ao arrastar manualmente
+  // arrastar o mapa com o dedo desliga o "seguir" (pra você poder olhar em volta);
+  // o botão 🎯 religa. Só drag manual desliga — recentrar programático não conta.
+  map.on("dragstart", () => { if (seguindo) { seguindo = false; const b = $("#censo-centrar"); if (b) b.classList.remove("ativo"); } });
   const iconeEu = L.divIcon({ className: "marcador-eu", html: '<div class="cone-eu" hidden></div><div class="dot-eu"></div>', iconSize: [22, 22] });
 
   // Régua = linha fina da minha posição até a MIRA (centro fixo da tela). Desenhada
@@ -2113,7 +2117,7 @@ async function telaCenso(estratoId, modo = "censo") {
       userLatLng = { lat: pos.coords.latitude, lng: pos.coords.longitude };
       userAlt = pos.coords.altitude; userAcc = pos.coords.accuracy;
       if (!userMarker) { userMarker = L.marker(userLatLng, { icon: iconeEu }).addTo(map); map.setView(userLatLng, map.getZoom()); }
-      else userMarker.setLatLng(userLatLng);
+      else { userMarker.setLatLng(userLatLng); if (seguindo) map.panTo(userLatLng, { animate: true, duration: 0.7 }); }
       // só guarda no rastro se andei o suficiente (não polui parado)
       const last = rastro[rastro.length - 1];
       if (!last || distanciaM({ lat: last[0], lng: last[1] }, userLatLng) > 2) {
@@ -2141,7 +2145,8 @@ async function telaCenso(estratoId, modo = "censo") {
   atualizarLeitura();
 
   $("#censo-voltar").onclick = voltar;
-  $("#censo-centrar").onclick = () => { if (userLatLng) map.setView(userLatLng, Math.max(map.getZoom(), 18)); };
+  $("#censo-centrar").onclick = () => { seguindo = true; $("#censo-centrar").classList.add("ativo"); if (userLatLng) map.setView(userLatLng, Math.max(map.getZoom(), 18)); };
+  $("#censo-centrar").classList.add("ativo"); // começa seguindo
   if (!ehFitos) {
     $("#censo-add").onclick = () => {
       const c = map.getCenter();

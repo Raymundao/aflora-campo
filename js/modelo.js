@@ -47,6 +47,12 @@ export function registroEspecies(inv, nomesExtra = []) {
       if (v) set.add(v);
     }
   }
+  for (const e of (inv.estratos || [])) {
+    for (const pt of (e.pontos || [])) {
+      const v = (pt.especie || "").trim();
+      if (v) set.add(v);
+    }
+  }
   for (const n of (inv.especies || [])) { const v = (n || "").trim(); if (v) set.add(v); }
   for (const n of nomesExtra) { const v = (n || "").trim(); if (v) set.add(v); }
   return [...set].sort((a, b) => a.localeCompare(b, "pt-BR"));
@@ -321,6 +327,17 @@ export function especiesDoInventario(inv, excluirId = null) {
       if (v) set.add(v);
     }
   }
+  // espécies registradas no CENSO (pontos de cada estrato) — pra o autocomplete do
+  // censo mostrar o que já foi registrado, igual nas parcelas.
+  for (const e of (inv.estratos || [])) {
+    for (const pt of (e.pontos || [])) {
+      if (pt.id === excluirId) continue;
+      const v = (pt.especie || "").trim();
+      if (v) set.add(v);
+    }
+  }
+  // espécies pré-cadastradas / adicionadas manualmente (registro do inventário)
+  for (const n of (inv.especies || [])) { const v = (n || "").trim(); if (v) set.add(v); }
   return [...set].sort((a, b) => a.localeCompare(b, "pt-BR"));
 }
 
