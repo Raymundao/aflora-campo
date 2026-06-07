@@ -24,7 +24,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v59"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v60"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -1954,47 +1954,54 @@ async function telaCenso(estratoId, modo = "censo") {
     pontosCv.style.width = sz.x + "px"; pontosCv.style.height = sz.y + "px";
   }
   ajustarPontosCv();
+  let gestoAtivo = false; // durante pinça/giro: desenho "rascunho" (sem placas) p/ ficar leve
   function desenharPontos() {
     const sz = map.getSize(), dpr = window.devicePixelRatio || 1;
     if (pontosCv.width !== Math.round(sz.x * dpr)) ajustarPontosCv();
-    const ctx = pontosCtx, mx = sz.x + 40, my = sz.y + 40;
+    const ctx = pontosCtx;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, sz.x, sz.y);
+    const bounds = map.getBounds().pad(0.2); // descarta o que está fora da tela (barato)
     // pontos importados (referência) — atrás
     for (const r of inv.geoRefs) {
       if (r.oculto || r.tipo !== "ponto") continue;
+      if (!bounds.contains(r.coords[0])) continue;
       const p = map.latLngToContainerPoint(r.coords[0]);
-      if (p.x < -40 || p.y < -40 || p.x > mx || p.y > my) continue;
       ctx.fillStyle = r.cor || r.corBorda || "#00BCD4"; ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
       desenharFormaPonto(ctx, p.x, p.y, r.tamanho || 12, r.forma);
       ctx.fill(); ctx.stroke();
     }
-    // pontos do censo — na frente
+    // pontos do censo — na frente. UMA passada: projeta 1x por ponto, desenha o círculo
+    // e guarda a posição p/ as placas (placas só quando PARADO — texto é caro no gesto).
     if (est && !est.pontosOcultos) {
-      const zoom = map.getZoom();
-      ctx.lineWidth = 2; ctx.strokeStyle = "#fff";
-      est.pontos.forEach((pt) => {
-        if (pt.lat == null) return;
+      const comLabels = !gestoAtivo && map._mostrarLabels !== false && map.getZoom() >= 16;
+      const labels = comLabels ? [] : null;
+      ctx.fillStyle = "#1B5E20"; ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
+      const pts = est.pontos;
+      for (let i = 0; i < pts.length; i++) {
+        const pt = pts[i];
+        if (pt.lat == null || !bounds.contains([pt.lat, pt.lon])) continue;
         const p = map.latLngToContainerPoint([pt.lat, pt.lon]);
-        if (p.x < -40 || p.y < -40 || p.x > mx || p.y > my) return;
-        ctx.fillStyle = "#1B5E20";
         ctx.beginPath(); ctx.arc(p.x, p.y, 9, 0, 2 * Math.PI); ctx.fill(); ctx.stroke();
-      });
-      if (map._mostrarLabels !== false && zoom >= 16) {
-        ctx.font = "bold 11px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-        est.pontos.forEach((pt, i) => {
-          if (pt.lat == null) return;
-          const p = map.latLngToContainerPoint([pt.lat, pt.lon]);
-          if (p.x < -40 || p.y < -40 || p.x > mx || p.y > my) return;
-          const txt = String(pt.placa || (i + 1));
-          ctx.lineWidth = 3; ctx.strokeStyle = "rgba(0,0,0,.75)"; ctx.strokeText(txt, p.x, p.y);
-          ctx.fillStyle = "#fff"; ctx.fillText(txt, p.x, p.y);
-        });
+        if (labels) labels.push(p.x, p.y, String(pt.placa || (i + 1)));
+      }
+      if (labels && labels.length) {
+        ctx.font = "bold 11px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.lineWidth = 3;
+        for (let j = 0; j < labels.length; j += 3) {
+          ctx.strokeStyle = "rgba(0,0,0,.75)"; ctx.strokeText(labels[j + 2], labels[j], labels[j + 1]);
+          ctx.fillStyle = "#fff"; ctx.fillText(labels[j + 2], labels[j], labels[j + 1]);
+        }
       }
     }
   }
-  // redesenha os pontos em QUALQUER mudança de view (inclui frames do gesto)
-  map.on("move zoom rotate zoomend moveend rotateend viewreset resize zoomanim", desenharPontos);
+  // Throttle por frame (rAF): muitos eventos no mesmo quadro viram 1 só desenho.
+  // Durante o gesto desenha rascunho (sem placas) = leve; ao parar, desenho completo.
+  let rafPend = false, idleT = null;
+  function agendarPontos() { if (rafPend) return; rafPend = true; requestAnimationFrame(() => { rafPend = false; desenharPontos(); }); }
+  function pontosAtivo() { gestoAtivo = true; agendarPontos(); if (idleT) clearTimeout(idleT); idleT = setTimeout(pontosParado, 220); }
+  function pontosParado() { gestoAtivo = false; if (idleT) { clearTimeout(idleT); idleT = null; } desenharPontos(); }
+  map.on("move zoom rotate zoomanim", pontosAtivo);
+  map.on("moveend zoomend rotateend viewreset resize", pontosParado);
   // tocar num ponto abre o formulário (hit-test por proximidade na tela); ignora em modo desenho
   map.on("click", (e) => {
     if (desenho) return;
