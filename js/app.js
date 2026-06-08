@@ -24,7 +24,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v66"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v67"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -1918,6 +1918,7 @@ async function telaCenso(estratoId, modo = "censo") {
       <div class="censo-label" id="censo-label" hidden></div>
       <button class="censo-fab censo-voltar" id="censo-voltar" aria-label="Voltar">‹</button>
       <div class="censo-ver" id="censo-ver">${APP_VERSION}</div>
+      <div class="gps-box" id="gps-box" hidden></div>
       <div class="bussola" id="bussola" hidden><div class="bussola-rosa" id="bussola-rosa"><span class="bussola-n">N</span></div><span class="bussola-deg" id="bussola-deg">—</span></div>
       <div class="trk-banner" id="trk-banner" hidden></div>
       <div class="censo-fabs">
@@ -2080,7 +2081,7 @@ async function telaCenso(estratoId, modo = "censo") {
   });
   setTimeout(() => map.invalidateSize(), 120); // o container acabou de entrar no DOM
 
-  let userLatLng = null, userAlt = null, userAcc = null, userMarker = null;
+  let userLatLng = null, userAlt = null, userAcc = null, userMarker = null, accCircle = null;
   let seguindo = true; // mapa acompanha a minha posição; desliga ao arrastar manualmente
   // arrastar o mapa com o dedo desliga o "seguir" (pra você poder olhar em volta);
   // o botão 🎯 religa. Só drag manual desliga — recentrar programático não conta.
@@ -2116,6 +2117,19 @@ async function telaCenso(estratoId, modo = "censo") {
   // redesenha a régua em qualquer mudança de view (pan/zoom/rotação)
   map.on("move zoom zoomend viewreset rotate rotateend resize", atualizarLeitura);
 
+  // Caixinha de GPS no topo (discreta, estilo AlpineQuest). O navegador NÃO informa
+  // nº de satélites — só a precisão (raio de erro em m) e altitude. A cor da bolinha
+  // resume a qualidade do sinal: verde ≤8 m, amarelo ≤20 m, vermelho acima.
+  function atualizarGps() {
+    const box = $("#gps-box");
+    if (!box) return;
+    if (userAcc == null) { box.hidden = true; return; }
+    box.hidden = false;
+    const cor = userAcc <= 8 ? "#43A047" : userAcc <= 20 ? "#FBC02D" : "#E53935";
+    const alt = (userAlt != null && isFinite(userAlt)) ? ` · ↑ ${fmtNum(userAlt, 0)} m` : "";
+    box.innerHTML = `<span class="gps-dot" style="background:${cor}"></span>± ${fmtNum(userAcc, 0)} m${alt}`;
+  }
+
   // rastro recente (breadcrumb): trilha AZUL atrás de mim que vai sumindo (estilo AlpineQuest).
   const RASTRO_MAX = 60;
   const rastro = [];
@@ -2148,6 +2162,13 @@ async function telaCenso(estratoId, modo = "censo") {
       userAlt = pos.coords.altitude; userAcc = pos.coords.accuracy;
       if (!userMarker) { userMarker = L.marker(userLatLng, { icon: iconeEu }).addTo(map); map.setView(userLatLng, map.getZoom()); }
       else { userMarker.setLatLng(userLatLng); if (seguindo) map.panTo(userLatLng, { animate: true, duration: 0.7 }); }
+      // buffer de precisão: círculo geográfico (raio = erro do GPS em metros) igual
+      // ao AlpineQuest — translúcido, atrás do marcador, não clicável.
+      if (userAcc != null) {
+        if (!accCircle) accCircle = L.circle(userLatLng, { radius: userAcc, color: "#1565C0", weight: 1, opacity: 0.5, fillColor: "#1565C0", fillOpacity: 0.12, interactive: false }).addTo(map);
+        else { accCircle.setLatLng(userLatLng); accCircle.setRadius(userAcc); }
+      }
+      atualizarGps();
       // só guarda no rastro se andei o suficiente (não polui parado)
       const last = rastro[rastro.length - 1];
       if (!last || distanciaM({ lat: last[0], lng: last[1] }, userLatLng) > 2) {
