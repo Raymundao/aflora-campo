@@ -312,8 +312,8 @@ input:focus, select:focus, textarea:focus { outline: 3px solid var(--verde-claro
 .censo-regua { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 590; pointer-events: none; }
 .censo-regua line { stroke: #1565C0; stroke-width: 2; stroke-opacity: .9; }
 .censo-dot { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 600;
-  width: 13px; height: 13px; border-radius: 50%; background: #1565C0; border: 2px solid #fff;
-  box-shadow: 0 0 3px rgba(0,0,0,.7); pointer-events: none; }
+  width: 10px; height: 10px; border-radius: 50%; background: #fff; border: 2px solid #424242;
+  box-shadow: 0 0 3px rgba(0,0,0,.6); pointer-events: none; }
 /* label de distância/elevação JUNTO da linha (perto da bolinha) */
 .censo-label { position: absolute; top: calc(50% + 11px); left: calc(50% + 12px); z-index: 600;
   background: rgba(0,0,0,.6); color: #fff; padding: 2px 8px; border-radius: 8px;
