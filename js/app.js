@@ -24,7 +24,7 @@ import { comprimirImagem, carimbarTexto, urlDeBlob } from "./imagem.js";
 import { criarZip } from "./zip.js";
 
 const app = document.getElementById("app");
-const APP_VERSION = "v64"; // manter em sincronia com o CACHE do sw.js
+const APP_VERSION = "v65"; // manter em sincronia com o CACHE do sw.js
 let inv = null; // inventário aberto
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
@@ -1925,7 +1925,7 @@ async function telaCenso(estratoId, modo = "censo") {
         ${ehFitos ? "" : '<button class="censo-fab" id="censo-lista" title="Lista de pontos">📋</button>'}
         <button class="censo-fab" id="censo-bussola" title="Bússola">🧭</button>
         ${ehFitos ? "" : '<button class="censo-fab" id="censo-trilha" title="Gravar trilha">🛤️</button>'}
-        ${ehFitos ? "" : '<button class="censo-fab ativo" id="censo-labels" title="Mostrar/ocultar nomes (placas)">🏷️</button>'}
+        ${ehFitos ? "" : '<button class="censo-fab" id="censo-labels" title="Nomes: toque p/ placa → espécie → desligar">🏷️</button>'}
         <button class="censo-fab" id="censo-desenho" title="Desenhar fitofisionomia/polígono">✏️</button>
         <button class="censo-fab" id="censo-importar" title="Importar KML (ADA…)">📂</button>
         <button class="censo-fab" id="censo-baixar" title="Baixar área offline">⬇</button>
@@ -1996,7 +1996,9 @@ async function telaCenso(estratoId, modo = "censo") {
     // pontos do censo — na frente. UMA passada: projeta 1x por ponto, desenha o círculo
     // e guarda a posição p/ as placas (placas só quando PARADO — texto é caro no gesto).
     if (est && !est.pontosOcultos) {
-      const comLabels = !gestoAtivo && map._mostrarLabels !== false && map.getZoom() >= 16;
+      // 3 estados de nome: 0 = desligado, 1 = placa, 2 = espécie (itálico)
+      const modo = map._labelMode || 0;
+      const comLabels = !gestoAtivo && modo > 0 && map.getZoom() >= 16;
       const labels = comLabels ? [] : null;
       ctx.fillStyle = "#1B5E20"; ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
       const pts = est.pontos;
@@ -2005,13 +2007,17 @@ async function telaCenso(estratoId, modo = "censo") {
         if (pt.lat == null || !bounds.contains([pt.lat, pt.lon])) continue;
         const p = map.latLngToContainerPoint([pt.lat, pt.lon]);
         ctx.beginPath(); ctx.arc(p.x, p.y, 9, 0, 2 * Math.PI); ctx.fill(); ctx.stroke();
-        if (labels) labels.push(p.x, p.y, String(pt.placa || (i + 1)));
+        if (labels) {
+          const txt = modo === 2 ? (pt.especie || "").trim() : String(pt.placa || (i + 1));
+          if (txt) labels.push(p.x, p.y, txt);
+        }
       }
-      // placas: só desenha o TEXTO quando há poucos pontos na tela. Com muitos, o texto
-      // (a) custava caro e dava "pau" ao terminar o zoom e (b) virava um borrão ilegível.
-      // Aproxime o zoom que, com poucos pontos à vista, as placas aparecem.
-      if (labels && labels.length && labels.length / 3 <= 140) {
-        ctx.font = "bold 11px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.lineWidth = 3;
+      // só desenha o TEXTO quando há poucos pontos na tela (senão custa caro e vira
+      // borrão). Espécie é texto largo → limite menor. Aproxime o zoom p/ aparecer.
+      const lim = modo === 2 ? 70 : 140;
+      if (labels && labels.length && labels.length / 3 <= lim) {
+        ctx.font = (modo === 2 ? "italic " : "bold ") + "11px system-ui, sans-serif";
+        ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.lineWidth = 3;
         for (let j = 0; j < labels.length; j += 3) {
           ctx.strokeStyle = "rgba(0,0,0,.75)"; ctx.strokeText(labels[j + 2], labels[j], labels[j + 1]);
           ctx.fillStyle = "#fff"; ctx.fillText(labels[j + 2], labels[j], labels[j + 1]);
@@ -2178,11 +2184,15 @@ async function telaCenso(estratoId, modo = "censo") {
     };
   }
   $("#censo-baixar").onclick = () => baixarAreaCenso();
-  // 🏷️ liga/desliga os nomes (placas) sobre os pontos do censo
-  map._mostrarLabels = true;
+  // 🏷️ nomes sobre os pontos: ciclo de 3 estados — toque 1 = placa, 2 = espécie, 3 = desliga.
+  map._labelMode = 0; // começa desligado
   if ($("#censo-labels")) $("#censo-labels").onclick = () => {
-    map._mostrarLabels = !map._mostrarLabels;
-    $("#censo-labels").classList.toggle("ativo", map._mostrarLabels);
+    map._labelMode = (map._labelMode + 1) % 3;
+    const b = $("#censo-labels");
+    b.classList.toggle("ativo", map._labelMode > 0);
+    b.textContent = map._labelMode === 2 ? "🌿" : "🏷️";
+    b.title = map._labelMode === 0 ? "Nomes: desligado (toque p/ placa)"
+      : map._labelMode === 1 ? "Nomes: placa (toque p/ espécie)" : "Nomes: espécie (toque p/ desligar)";
     renderPontos();
   };
   // some/mostra os botões de baixo (+Ponto / Desenhar fito) e o 🎯 conforme o painel abre/fecha
